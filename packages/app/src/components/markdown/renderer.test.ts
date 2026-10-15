@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
 import { prepareMarkdownSource } from "./source";
+import { normalizeMarkdownHtml } from "./html";
 
 describe("shared Markdown source adaptation", () => {
   it("keeps paragraphs, fences and quotes together for the library", () => {
@@ -401,3 +402,13 @@ it("reserves pending image geometry until decode succeeds and collapses only con
     "Local\n\nRemote",
   );
 });
+
+it("normalizes a large HTML table without repeated prefix scans", () => {
+  const cell = "cell".repeat(8);
+  const source = `<table>${`<tr><td>${cell}</td><td>${cell}</td></tr>`.repeat(8000)}</table>`;
+  const started = performance.now();
+  const rendered = normalizeMarkdownHtml(source);
+  expect(performance.now() - started).toBeLessThan(3000);
+  expect(rendered.split("\n\n")).toHaveLength(8000);
+  expect(rendered.startsWith(`${cell} ${cell}`)).toBe(true);
+}, 20000);

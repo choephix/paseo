@@ -54,6 +54,7 @@ export function normalizeMarkdownHtml(source: string): string {
   }
   protectCode(tree);
   const links: (string | undefined)[] = [];
+  let previousTag: { name: string; end: number } | null = null;
   const convert = (raw: string, offset: number): string => {
     if (codeRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
     if (raw.startsWith("<!--")) return "";
@@ -76,8 +77,14 @@ export function normalizeMarkdownHtml(source: string): string {
       );
     const closing = raw.startsWith("</");
     const name = /^<\/?([\w-]+)/.exec(raw)?.[1].toLowerCase() ?? "";
+    // Each gap is inspected once, rather than searching the complete prefix
+    // for a preceding tag on every table row or nested block.
+    const startsAfterBoundary = previousTag
+      ? BLOCK_TAGS.has(previousTag.name) && /^\s*$/.test(source.slice(previousTag.end, offset))
+      : /^\s*$/.test(source.slice(0, offset));
+    previousTag = { name, end: offset + raw.length };
     if (EMPHASIS[name]) return EMPHASIS[name];
-    const boundary = layoutBoundary(name, source, raw, offset, closing);
+    const boundary = layoutBoundary(name, source, raw, offset, closing, startsAfterBoundary);
     if (boundary !== null) return boundary;
     if (name === "a") return markdownAnchor(raw, closing, links);
     if (name === "img" && !closing) {
@@ -93,8 +100,8 @@ export function normalizeMarkdownHtml(source: string): string {
     result += source.slice(cursor, range.start);
     // Inline HTML code has separate opening/closing AST nodes. Convert the pair
     // together so its contents keep backslashes and get a safe backtick delimiter.
-    const code = /^<(code|summary)\b[^>]*>[\s\S]*?<\/\1\s*>/i.exec(source.slice(range.start));
-    const end = code ? Math.max(range.end, range.start + code[0].length) : range.end;
+    const paired = /^<(code|summary)\b[^>]*>[\s\S]*?<\/\1\s*>/i.exec(source.slice(range.start));
+    const end = paired ? Math.max(range.end, range.start + paired[0].length) : range.end;
     result += source
       .slice(range.start, end)
       .replace(HTML, (raw, offset) => convert(raw, range.start + offset));
@@ -135,17 +142,20 @@ function markdownAnchor(raw: string, closing: boolean, links: (string | undefine
   return href === undefined ? "" : "[";
 }
 
-function blockBoundary(source: string, raw: string, offset: number, closing: boolean): string {
+function blockBoundary(
+  source: string,
+  raw: string,
+  offset: number,
+  closing: boolean,
+  startsAfterBoundary: boolean,
+): string {
   if (closing) {
     const following = source.slice(offset + raw.length);
-    if (following.trim() === "" || following.startsWith("\n\n")) return "";
-    const nextClosingTag = /^<\/([\w-]+)/.exec(following.trimStart());
+    if (/^\s*$/.test(following) || following.startsWith("\n\n")) return "";
+    const nextClosingTag = /^\s*<\/([\w-]+)/.exec(following);
     if (nextClosingTag && BLOCK_TAGS.has(nextClosingTag[1].toLowerCase())) return "";
-  } else {
-    const preceding = source.slice(0, offset).trimEnd();
-    if (!preceding) return "";
-    const previousTag = /<\/?([\w-]+)[^>]*>$/.exec(preceding);
-    if (previousTag && BLOCK_TAGS.has(previousTag[1].toLowerCase())) return "";
+  } else if (startsAfterBoundary) {
+    return "";
   }
   return "\n\n";
 }
@@ -156,12 +166,13 @@ function layoutBoundary(
   raw: string,
   offset: number,
   closing: boolean,
+  startsAfterBoundary: boolean,
 ): string | null {
   if (name === "br") return closing ? "" : "  \n";
   if (name === "summary") return closing ? "**\n\n" : "**";
   if (name === "details")
     return (closing ? offset + raw.length === source.length : offset === 0) ? "" : "\n\n";
-  if (BLOCK_TAGS.has(name)) return blockBoundary(source, raw, offset, closing);
+  if (BLOCK_TAGS.has(name)) return blockBoundary(source, raw, offset, closing, startsAfterBoundary);
   if ((name === "td" || name === "th") && closing)
     return /^<t[dh]\b/i.test(source.slice(offset + raw.length)) ? " " : "";
   return null;
