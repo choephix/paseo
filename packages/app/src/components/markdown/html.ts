@@ -6,7 +6,7 @@ import type { Nodes } from "mdast";
 const ATTRIBUTE = String.raw`\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:[^\s"'=<>\x60]+|'[^']*'|"[^"]*"))?`;
 const TAG = String.raw`<(?:[A-Za-z][A-Za-z0-9-]*(?:${ATTRIBUTE})*\s*\/?|\/[A-Za-z][A-Za-z0-9-]*\s*)>`;
 const HTML = new RegExp(
-  String.raw`(?<!\\)(?:<!--[\s\S]*?-->|<code\b[^>]*>[\s\S]*?<\/code\s*>|${TAG})`,
+  String.raw`(?<!\\)(?:<!--[\s\S]*?-->|<code\b[^>]*>[\s\S]*?<\/code\s*>|<summary\b[^>]*>[\s\S]*?<\/summary\s*>|${TAG})`,
   "gi",
 );
 const BLOCK_TAGS = new Set([
@@ -57,6 +57,16 @@ export function normalizeMarkdownHtml(source: string): string {
   const convert = (raw: string, offset: number): string => {
     if (codeRanges.some(({ start, end }) => offset >= start && offset < end)) return raw;
     if (raw.startsWith("<!--")) return "";
+    const summary = /^<summary\b[^>]*>([\s\S]*?)<\/summary\s*>$/i.exec(raw);
+    if (summary) {
+      const title = normalizeMarkdownHtml(summary[1]).trim();
+      // A summary is one bold paragraph, even when its HTML title uses headings
+      // or several block wrappers. Slice AST blocks so inline code stays literal.
+      const inline = fromMarkdown(title)
+        .children.map(({ position }) => title.slice(position!.start.offset!, position!.end.offset!))
+        .join(" ");
+      return `**${inline}**\n\n`;
+    }
     const code = /^<code\b[^>]*>([\s\S]*?)<\/code\s*>$/i.exec(raw);
     if (code)
       return inlineCode(
@@ -83,7 +93,7 @@ export function normalizeMarkdownHtml(source: string): string {
     result += source.slice(cursor, range.start);
     // Inline HTML code has separate opening/closing AST nodes. Convert the pair
     // together so its contents keep backslashes and get a safe backtick delimiter.
-    const code = /^<code\b[^>]*>[\s\S]*?<\/code\s*>/i.exec(source.slice(range.start));
+    const code = /^<(code|summary)\b[^>]*>[\s\S]*?<\/\1\s*>/i.exec(source.slice(range.start));
     const end = code ? Math.max(range.end, range.start + code[0].length) : range.end;
     result += source
       .slice(range.start, end)

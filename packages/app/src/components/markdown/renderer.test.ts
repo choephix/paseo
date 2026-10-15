@@ -222,6 +222,14 @@ describe("GitHub comment HTML normalization", () => {
       "**Review details**\n\nBody **stays**.",
     ],
     ["Before<!-- private -->After", "BeforeAfter"],
+    [
+      "<details><summary><h3>Important Files Changed</h3></summary>Body</details>",
+      "**Important Files Changed**\n\nBody",
+    ],
+    [
+      "<details><summary><p>First</p><p>Second</p></summary>Body</details>",
+      "**First Second**\n\nBody",
+    ],
     ["<span>file.</span>ts", "file.ts"],
     ['<a href="https://example.com">Git</a>Hub', "[Git](<https://example.com>)Hub"],
     ["<span>Git</span><span>Hub</span>", "GitHub"],
