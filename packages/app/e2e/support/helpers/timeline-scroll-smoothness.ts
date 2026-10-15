@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { expect, type Page, type TestInfo } from "@playwright/test";
 import { seedMockAgentWorkspace, openAgentRoute, type MockAgentWorkspace } from "./mock-agent";
 import { openAgentTimeline, expectTimelinePromptVisible } from "./timeline-pagination";
+import { holdAssistantStream } from "./agent-timeline-gate";
 
 export const scrollCadences = [
   { name: "slow", delta: 160, intervalMs: 50, steps: 1000 },
@@ -68,6 +69,7 @@ export async function withStreamingReader(run: (agent: MockAgentWorkspace) => Pr
 }
 
 export async function holdParagraphThroughCompletion(page: Page, agent: MockAgentWorkspace) {
+  const stream = await holdAssistantStream(page, agent.agentId);
   await openAgentRoute(page, agent);
   await page.getByRole("textbox", { name: "Message agent...", exact: true }).waitFor();
   const scroll = page.getByTestId("agent-chat-scroll");
@@ -85,9 +87,15 @@ export async function holdParagraphThroughCompletion(page: Page, agent: MockAgen
     return result;
   });
   await agent.client.sendAgentMessage(agent.agentId, "Stream the mixed response.");
+  await stream.showUntil("Long section 12\n");
   await page
     .getByRole("heading", { name: "Long section 12", exact: true })
     .waitFor({ state: "attached" });
+  // Exercise a reader whose producer has already finished; delivery must be gated.
+  await agent.client.waitForFinish(agent.agentId, 30_000);
+  await expect(page.getByTestId("mermaid-viewport")).toHaveCount(2);
+  await expect(page.getByTestId("mermaid-viewport").nth(0)).toHaveCSS("opacity", "1");
+  await expect(page.getByTestId("mermaid-viewport").nth(1)).toHaveCSS("opacity", "1");
   const maxFollowGap = await following.evaluate((result) => {
     result.stopped = true;
     return result.maxGap;
@@ -146,6 +154,7 @@ export async function holdParagraphThroughCompletion(page: Page, agent: MockAgen
   await expect(
     page.getByTestId("scroll-to-bottom-button").filter({ visible: true }).first(),
   ).toBeVisible();
+  stream.release();
   await page.waitForFunction((result) => result.done, recording);
   return { ...(await recording.jsonValue()), maxFollowGap };
 }
