@@ -403,12 +403,34 @@ it("reserves pending image geometry until decode succeeds and collapses only con
   );
 });
 
-it("normalizes a large HTML table without repeated prefix scans", () => {
+it("normalizes a large HTML table with linear bounded-source slicing", () => {
   const cell = "cell".repeat(8);
-  const source = `<table>${`<tr><td>${cell}</td><td>${cell}</td></tr>`.repeat(8000)}</table>`;
-  const started = performance.now();
-  const rendered = normalizeMarkdownHtml(source);
-  expect(performance.now() - started).toBeLessThan(3000);
-  expect(rendered.split("\n\n")).toHaveLength(8000);
-  expect(rendered.startsWith(`${cell} ${cell}`)).toBe(true);
-}, 20000);
+  const measure = (rows: number) => {
+    const source = `<table>${`<tr><td>${cell}</td><td>${cell}</td></tr>`.repeat(rows)}</table>`;
+    const originalSlice = String.prototype.slice;
+    let inspectedCharacters = 0;
+    // Observe real slices without changing their results. Repeated source.slice(0, offset)
+    // prefix scans grow quadratically; inspecting only each new gap grows linearly.
+    // eslint-disable-next-line no-extend-native -- Test-only observation, restored in finally.
+    String.prototype.slice = function (start, end) {
+      const result = originalSlice.call(this, start, end);
+      if (String(this) === source && end !== undefined) {
+        inspectedCharacters += result.length;
+      }
+      return result;
+    };
+    let rendered: string;
+    try {
+      rendered = normalizeMarkdownHtml(source);
+    } finally {
+      // eslint-disable-next-line no-extend-native -- Restore the observed built-in unchanged.
+      String.prototype.slice = originalSlice;
+    }
+    expect(rendered.split("\n\n")).toHaveLength(rows);
+    expect(rendered.startsWith(`${cell} ${cell}`)).toBe(true);
+    return inspectedCharacters;
+  };
+  const baseline = measure(200);
+  expect(baseline).toBeGreaterThan(0);
+  expect(measure(800)).toBeLessThanOrEqual(baseline * 4);
+});

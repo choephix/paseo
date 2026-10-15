@@ -39,7 +39,7 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
   memo boundary each coalesced tick re-rendered every mounted row (about 50 on a phone, 100–250 ms of
   JS per tick). `layoutStream` keeps a layout item's identity when nothing about it changed,
   `useRevisedHistoryRows` hands a fresh item identity to rows whose tool-call group, expanded state,
-  or breakpoint changed, and `HistoryStreamRow` memoizes on both. Every viewport runs its history
+  or breakpoint changed, and `StreamRow` memoizes on both. Every viewport runs its history
   through that hook; the web viewport once skipped it and history hosts of a live tool group went
   stale. A new field on `StreamLayoutItem` must be added to `areLayoutItemsEquivalent`, or sharing
   silently stops.
