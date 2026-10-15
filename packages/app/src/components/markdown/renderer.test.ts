@@ -222,6 +222,10 @@ describe("GitHub comment HTML normalization", () => {
       "**Review details**\n\nBody **stays**.",
     ],
     ["Before<!-- private -->After", "BeforeAfter"],
+    ["<span>file.</span>ts", "file.ts"],
+    ['<a href="https://example.com">Git</a>Hub', "[Git](<https://example.com>)Hub"],
+    ["<span>Git</span><span>Hub</span>", "GitHub"],
+    ["<span>Git</span> Hub", "Git Hub"],
     ["<div><span>Keep the content</span></div>", "Keep the content"],
     [
       '<a href="https://example.com"><strong>Review</strong></a>',
@@ -297,14 +301,14 @@ it("uses the first repeated image reference definition", () => {
   );
 });
 
-it("keeps Greptile header links and block text separated", () => {
+it("preserves authored adjacency in the Greptile header", () => {
   const source =
     '<h2><a href="https://app.greptile.com/api/retrigger?id=81261069"><picture><source media="(prefers-color-scheme: dark)" srcset="https://greptile-static-assets.s3.amazonaws.com/badges/RetriggerDark.svg?v=2"><source media="(prefers-color-scheme: light)" srcset="https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2"><img alt="Retrigger" src="https://greptile-static-assets.s3.amazonaws.com/badges/Retrigger.svg?v=2" align="right"></picture></a><a href="https://app.greptile.com/paseo/github/getpaseo/paseo/-/pull/6973"><picture><source media="(prefers-color-scheme: dark)" srcset="https://greptile-static-assets.s3.amazonaws.com/badges/ViewInGreptileDark.svg?v=2"><source media="(prefers-color-scheme: light)" srcset="https://greptile-static-assets.s3.amazonaws.com/badges/ViewInGreptile.svg?v=2"><img alt="View in Greptile" src="https://greptile-static-assets.s3.amazonaws.com/badges/ViewInGreptile.svg?v=2" align="right"></picture></a>Confidence Score: 2/5</h2>';
   const rendered = prepareMarkdownSource(source, undefined, { supportsSvg: false }).render();
   expect(rendered).toContain(
-    "[Retrigger](<https://app.greptile.com/api/retrigger?id=81261069>) [View in Greptile]",
+    "[Retrigger](<https://app.greptile.com/api/retrigger?id=81261069>)[View in Greptile]",
   );
-  expect(rendered).toContain(") Confidence Score: 2/5");
+  expect(rendered).toContain(")Confidence Score: 2/5");
 });
 
 it("keeps paragraph, heading and table-row boundaries when stripping HTML", () => {

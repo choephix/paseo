@@ -69,8 +69,7 @@ export function normalizeMarkdownHtml(source: string): string {
     if (EMPHASIS[name]) return EMPHASIS[name];
     const boundary = layoutBoundary(name, source, raw, offset, closing);
     if (boundary !== null) return boundary;
-    if (name === "a")
-      return markdownAnchor(raw, closing, links) + inlineBoundary(source, raw, offset, closing);
+    if (name === "a") return markdownAnchor(raw, closing, links);
     if (name === "img" && !closing) {
       const { src, alt = "" } = attributes(raw);
       return src ? `![${alt.replace(/[[\]\\]/g, "\\$&")}](<${markdownUrl(src)}>)` : alt;
@@ -126,11 +125,6 @@ function markdownAnchor(raw: string, closing: boolean, links: (string | undefine
   return href === undefined ? "" : "[";
 }
 
-function inlineBoundary(source: string, raw: string, offset: number, closing: boolean): string {
-  if (!closing) return "";
-  return /^(?:<[A-Za-z]|[A-Za-z0-9])/.test(source.slice(offset + raw.length)) ? " " : "";
-}
-
 function blockBoundary(source: string, raw: string, offset: number, closing: boolean): string {
   if (closing) {
     const following = source.slice(offset + raw.length);
@@ -160,6 +154,5 @@ function layoutBoundary(
   if (BLOCK_TAGS.has(name)) return blockBoundary(source, raw, offset, closing);
   if ((name === "td" || name === "th") && closing)
     return /^<t[dh]\b/i.test(source.slice(offset + raw.length)) ? " " : "";
-  if (name === "span") return inlineBoundary(source, raw, offset, closing);
   return null;
 }
