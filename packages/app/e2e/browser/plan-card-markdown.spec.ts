@@ -34,6 +34,51 @@ test.describe("Plan card markdown", () => {
 test("chat and file preview share the library renderer and resolve file links", async ({
   page,
 }, testInfo) => {
+  await withSharedMarkdownFiles(page, async () => {
+    const message = page.getByTestId("assistant-message");
+    await expect(message).toHaveCount(1);
+    await expect(message.locator(".enrm-text > p").first()).toContainText("First paragraph.");
+    await expect(message.locator(".enrm-text > p").nth(1)).toContainText("Second paragraph.");
+    await expect(message.locator("blockquote")).toContainText("A quote");
+    await expect(message.getByRole("table")).toContainText("42");
+    await expect(message.getByRole("cell").nth(0)).toHaveText("Answer");
+    await expect(message.getByRole("cell").nth(1)).toHaveText("");
+    await expect(message.getByRole("cell").nth(2)).toHaveText("42");
+    await expect(message.locator("p div")).toHaveCount(0);
+    await openSharedMarkdownFile(page, "README.md");
+    const preview = page.getByTestId("markdown-preview-frame");
+    await expect(preview.locator(".enrm-text")).toContainText("Second paragraph.");
+    await expect(preview.getByRole("table")).toContainText("42");
+    await returnToSharedMarkdownChat(page);
+    await expectFileLinkTooltip(
+      page,
+      message.getByRole("link", { name: "src/说明.md:2-3", exact: true }),
+      "packages/app/src/说明.md:2-3",
+    );
+    await openSharedMarkdownFile(page, "src/说明.md:2-3");
+    await expect(page.getByText("Unicode suffix lookup succeeded.", { exact: true })).toBeVisible();
+    await openSharedMarkdownFile(page, "packages/app/src/说明.md:2-3");
+    await expect(page.getByText("Unicode suffix lookup succeeded.", { exact: true })).toBeVisible();
+    await openSharedMarkdownFile(page, "Space file");
+    await expect(
+      page.getByText("Explicit link opened the space filename.", { exact: true }),
+    ).toBeVisible();
+    await openSharedMarkdownFile(page, "my%20file.ts");
+    await expect(
+      page.getByText("Inline code opened the literal percent filename.", { exact: true }),
+    ).toBeVisible();
+    await testInfo.attach("shared-renderer", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+  });
+});
+async function expectFileLinkTooltip(page: Page, link: Locator, path: string) {
+  await link.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(path);
+}
+
+async function withSharedMarkdownFiles(page: Page, run: () => Promise<void>) {
   const { writeFile, mkdir } = await import("node:fs/promises");
   const source =
     "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst answer = 42;\n```\n\n> A quote\n\n| Key || Value |\n| --- | --- | --- |\n| Answer || 42 |\n\nOpen `README.md` or `src/说明.md:2-3`, or packages/app/src/说明.md:2-3.\n\n[Space file](my%20file.ts) and `my%20file.ts`.";
@@ -59,51 +104,17 @@ test("chat and file preview share the library renderer and resolve file links", 
     // A cold render must work even when a separate parser chunk cannot be fetched.
     await page.route("**/wasm/md4c.bundle?**", (route) => route.abort("failed"));
     await openAgentRoute(page, session);
-    const message = page.getByTestId("assistant-message");
-    await expect(message).toHaveCount(1);
-    await expect(message.locator(".enrm-text > p").first()).toContainText("First paragraph.");
-    await expect(message.locator(".enrm-text > p").nth(1)).toContainText("Second paragraph.");
-    await expect(message.locator("blockquote")).toContainText("A quote");
-    await expect(message.getByRole("table")).toContainText("42");
-    await expect(message.getByRole("cell").nth(0)).toHaveText("Answer");
-    await expect(message.getByRole("cell").nth(1)).toHaveText("");
-    await expect(message.getByRole("cell").nth(2)).toHaveText("42");
-    await expect(message.locator("p div")).toHaveCount(0);
-    await message.getByRole("link", { name: "README.md" }).click();
-    const preview = page.getByTestId("markdown-preview-frame");
-    await expect(preview.locator(".enrm-text")).toContainText("Second paragraph.");
-    await expect(preview.getByRole("table")).toContainText("42");
-    await page.getByRole("button", { name: "Shared Markdown", exact: true }).click();
-    await expectFileLinkTooltip(
-      page,
-      message.getByRole("link", { name: "src/说明.md:2-3", exact: true }),
-      "packages/app/src/说明.md:2-3",
-    );
-    await message.getByRole("link", { name: "src/说明.md:2-3", exact: true }).click();
-    await expect(page.getByText("Unicode suffix lookup succeeded.", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Shared Markdown", exact: true }).click();
-    await message.getByRole("link", { name: "packages/app/src/说明.md:2-3", exact: true }).click();
-    await expect(page.getByText("Unicode suffix lookup succeeded.", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Shared Markdown", exact: true }).click();
-    await message.getByRole("link", { name: "Space file", exact: true }).click();
-    await expect(
-      page.getByText("Explicit link opened the space filename.", { exact: true }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "Shared Markdown", exact: true }).click();
-    await message.getByRole("link", { name: "my%20file.ts", exact: true }).click();
-    await expect(
-      page.getByText("Inline code opened the literal percent filename.", { exact: true }),
-    ).toBeVisible();
-    await testInfo.attach("shared-renderer", {
-      body: await page.screenshot(),
-      contentType: "image/png",
-    });
+    await run();
   } finally {
     await session.cleanup();
   }
-});
+}
 
-async function expectFileLinkTooltip(page: Page, link: Locator, path: string) {
-  await link.hover();
-  await expect(page.getByRole("tooltip")).toHaveText(path);
+async function returnToSharedMarkdownChat(page: Page) {
+  await page.getByRole("button", { name: "Shared Markdown", exact: true }).click();
+}
+
+async function openSharedMarkdownFile(page: Page, name: string) {
+  await returnToSharedMarkdownChat(page);
+  await page.getByTestId("assistant-message").getByRole("link", { name, exact: true }).click();
 }
