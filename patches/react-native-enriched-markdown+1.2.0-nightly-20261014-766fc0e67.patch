@@ -518,9 +518,25 @@ index c9644d1..58b2f4e 100644
    val onTaskListItemPress: ((taskIndex: Int, checked: Boolean, itemText: String) -> Unit)?,
    val onContextMenuItemPress: ((itemText: String, selectedText: String, selectionStart: Int, selectionEnd: Int) -> Unit)?,
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
-index e190548..f9d959a 100644
+index e190548..b2e6cf2 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
 +++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
+@@ -19,7 +19,6 @@ import android.view.Gravity
+ import android.view.MotionEvent
+ import android.view.View
+ import android.widget.FrameLayout
+-import android.widget.HorizontalScrollView
+ import androidx.core.view.ViewCompat
+ import com.swmansion.enriched.markdown.accessibility.AccessibilityLabels
+ import com.swmansion.enriched.markdown.parser.MarkdownASTNode
+@@ -38,6 +37,7 @@ import com.swmansion.enriched.markdown.utils.text.span.prepareWidthAwareSpans
+ import com.swmansion.enriched.markdown.utils.text.view.LinkLongPressMovementMethod
+ import com.swmansion.enriched.markdown.utils.text.view.cancelJSTouchForLinkTap
+ import com.swmansion.enriched.markdown.utils.text.view.reallowParentInterceptIfLinkReleased
++import com.swmansion.enriched.markdown.views.ClaimingHorizontalScrollView
+ import com.swmansion.enriched.markdown.views.ContextMenuPopup
+ import kotlin.math.ceil
+ import kotlin.math.max
 @@ -57,7 +57,7 @@ class TableContainerView(
  
    var allowFontScaling = true
@@ -530,6 +546,15 @@ index e190548..f9d959a 100644
    var onLinkLongPress: ((String) -> Unit)? = null
    var accessibilityLabels: AccessibilityLabels = AccessibilityLabels()
      set(value) {
+@@ -70,7 +70,7 @@ class TableContainerView(
+   var dynamicProps: DynamicBlockProps = DynamicBlockProps()
+ 
+   private val scrollView =
+-    HorizontalScrollView(context).apply {
++    ClaimingHorizontalScrollView(context).apply {
+       isHorizontalScrollBarEnabled = true
+       overScrollMode = View.OVER_SCROLL_NEVER
+       importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
 diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
 index ff00069..f3e13aa 100644
 --- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/spans/LinkSpan.kt
@@ -2441,3 +2466,138 @@ index c8311d4..d1e698c 100644
  }
  function LatexMathInlineRenderer({
    node,
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt
+index cba0825..21387f0 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/segments/CodeBlockContainerView.kt
+@@ -21,7 +21,6 @@ import android.view.GestureDetector
+ import android.view.MotionEvent
+ import android.view.View
+ import android.widget.FrameLayout
+-import android.widget.HorizontalScrollView
+ import android.widget.ImageView
+ import androidx.appcompat.widget.AppCompatImageButton
+ import androidx.appcompat.widget.AppCompatTextView
+@@ -33,6 +32,7 @@ import com.swmansion.enriched.markdown.utils.common.CodeBlockHighlighter
+ import com.swmansion.enriched.markdown.utils.common.CodeBlockNode
+ import com.swmansion.enriched.markdown.utils.text.extensions.applyCodeBlockTextStyle
+ import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
++import com.swmansion.enriched.markdown.views.ClaimingHorizontalScrollView
+ import com.swmansion.enriched.markdown.views.ContextMenuPopup
+ import com.swmansion.enriched.markdown.views.CopyGlyph
+ import kotlin.math.ceil
+@@ -102,7 +102,7 @@ class CodeBlockContainerView(
+     }
+ 
+   private val scrollView =
+-    HorizontalScrollView(context).apply {
++    ClaimingHorizontalScrollView(context).apply {
+       isHorizontalScrollBarEnabled = true
+       overScrollMode = View.OVER_SCROLL_NEVER
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ClaimingHorizontalScrollView.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ClaimingHorizontalScrollView.kt
+new file mode 100644
+index 0000000..d80ecbd
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/views/ClaimingHorizontalScrollView.kt
+@@ -0,0 +1,41 @@
++package com.swmansion.enriched.markdown.views
++
++import android.content.Context
++import android.view.MotionEvent
++import android.view.ViewConfiguration
++import android.widget.HorizontalScrollView
++import kotlin.math.abs
++
++/** Claims overflowing blocks before ancestor gesture handlers can activate. */
++internal class ClaimingHorizontalScrollView(context: Context) : HorizontalScrollView(context) {
++  private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
++  private var downX = 0f
++  private var downY = 0f
++  private var claimed = false
++
++  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
++    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
++      downX = event.x
++      downY = event.y
++      claimed = canScrollHorizontally(-1) || canScrollHorizontally(1)
++      if (claimed) parent.requestDisallowInterceptTouchEvent(true)
++    }
++
++    val handled = super.dispatchTouchEvent(event)
++    when (event.actionMasked) {
++      MotionEvent.ACTION_MOVE -> {
++        if (claimed) {
++          val dx = abs(event.x - downX)
++          val dy = abs(event.y - downY)
++          if (dy > dx && dy > touchSlop) {
++            // Release after native dispatch, which can itself disallow interception.
++            parent.requestDisallowInterceptTouchEvent(false)
++            claimed = false
++          }
++        }
++      }
++      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> claimed = false
++    }
++    return handled
++  }
++}
+diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.h b/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.h
+index a0c77f6..644e801 100644
+--- a/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.h
++++ b/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.h
+@@ -1,30 +1,7 @@
+ #import "ENRMUIKit.h"
+ 
+ /// Horizontal scroll view shared by code blocks, tables and display math.
+-///
+-/// A rightward pan that starts while the view is settled at its leading edge is
+-/// refused, so a full-width back gesture (react-native-screens
+-/// `fullScreenGestureEnabled`, iOS 26 content pop) can begin instead. Inward
+-/// pans, pans from inside the content, and pans during deceleration or bounce
+-/// scroll as usual. Cost: no bounce on a fresh rightward pan at the leading
+-/// edge. Left edge only; RTL is not handled. macOS keeps RCTUIScrollView.
+-///
+-/// TODO: move this decision to react-native-screens. RNSScreenStack already
+-/// inspects competing scroll-view pans (`shouldRequireFailureOfGestureRecognizer:`
+-/// on iOS 26, `shouldRecognizeSimultaneouslyWithGestureRecognizer:` before);
+-/// treating a scroll view settled at its leading edge as not competing would
+-/// cover every horizontal scroll view, keep the bounce when nothing can pop,
+-/// and handle RTL. Then this subclass is only needed without RNS.
++/// Keep the native scroll recognizer at the leading edge so enclosing sidebar
++/// gestures cannot take an outward drag that starts in an overflowing block.
+ @interface ENRMHorizontalScrollView : RCTUIScrollView
+ @end
+-
+-/// Decision behind `-gestureRecognizerShouldBegin:`, kept pure so it can be
+-/// tested without a live scroll view. `leadingBoundary` is the content offset
+-/// at the leading edge, i.e. `-adjustedContentInset.left`.
+-static inline BOOL ENRMShouldYieldOutwardPan(CGFloat contentOffsetX, CGFloat leadingBoundary, BOOL decelerating,
+-                                             CGPoint velocity)
+-{
+-  BOOL outward = velocity.x > fabs(velocity.y);
+-  BOOL settledAtLeadingEdge = !decelerating && fabs(contentOffsetX - leadingBoundary) <= 0.5;
+-  return outward && settledAtLeadingEdge;
+-}
+diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.m b/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.m
+index b98d10c..b645629 100644
+--- a/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.m
++++ b/node_modules/react-native-enriched-markdown/ios/utils/ENRMHorizontalScrollView.m
+@@ -1,17 +1,4 @@
+ #import "ENRMHorizontalScrollView.h"
+ 
+ @implementation ENRMHorizontalScrollView
+-
+-#if !TARGET_OS_OSX
+-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gestureRecognizer
+-{
+-  if (gestureRecognizer == self.panGestureRecognizer &&
+-      ENRMShouldYieldOutwardPan(self.contentOffset.x, -self.adjustedContentInset.left, self.isDecelerating,
+-                                [self.panGestureRecognizer velocityInView:self])) {
+-    return NO;
+-  }
+-  return [super gestureRecognizerShouldBegin:gestureRecognizer];
+-}
+-#endif
+-
+ @end

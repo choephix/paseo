@@ -20,6 +20,8 @@ Mermaid fences use the existing isolated diagram runtime and fullscreen viewer. 
 
 Native code blocks use the library's copy control and compiled grammars. Web code blocks use `HighlightedCodeBlock` through the library's `renderers.codeBlock` override. The patch also preserves web list numbering and link titles, marks pending parses with `aria-busy` so Find waits for rendered text, and carries link syntax through native and web tap events. Web inline code inside a link inherits only the link colour; its code font, size and background stay intact. Keep link variants colour-only: native pills replace text runs and prevent paths from wrapping; Android pills also use the surrounding block’s font size. The package patch is tracked by [upstream PR #997](https://github.com/software-mansion/enriched-markdown/pull/997); remove the patch when the pinned release includes it.
 
+The package patch also keeps overflowing native horizontal blocks in control of their drags: Android claims parent interception at touch-down and releases it for vertical drags so the chat list can scroll; iOS keeps its scroll recognizer active for outward drags at the leading edge. This prevents compact sidebar pans from taking block scrolling without changing sidebar swipes on prose or non-overflowing blocks. Native changes require a client rebuild.
+
 The library determines how incomplete Markdown appears during streaming. Completed text uses the same component and engine as history. Find and scroll-to-message address source message ids; selection-copy understands semantic HTML and the web code component's copy metadata.
 
 ## Verification
