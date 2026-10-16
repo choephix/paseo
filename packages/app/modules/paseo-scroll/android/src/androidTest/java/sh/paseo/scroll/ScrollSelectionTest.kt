@@ -8,11 +8,12 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.bridge.JavaOnlyArray
 import com.facebook.react.bridge.JavaOnlyMap
-import com.facebook.react.uimanager.ReactStylesDiffMap
-import com.facebook.react.bridge.BridgeReactContext
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
+import com.facebook.react.uimanager.DisplayMetricsHolder
+import com.facebook.react.uimanager.ReactStylesDiffMap
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.views.scroll.ReactScrollView
 import com.facebook.react.views.scroll.ReactScrollViewManager
@@ -50,34 +51,29 @@ class ScrollSelectionTest {
     assertNotEquals(before, scroll.scrollY)
   }
 
-  @Test fun directVerticalMirroringKeepsSelectionStill() = withScroll(inverted = false) { scroll, text ->
-    scroll.scaleY = -1f
+  @Test fun verticalScaleStillKeepsFocusAndSelectionInPlace() = withScroll(inverted = true, transform = "scaleY") { scroll, text ->
     val before = scroll.scrollY
+    assertTrue(text.requestFocus())
     text.requestRectangleOnScreen(Rect(0, 0, 80, 40), true)
     assertEquals(before, scroll.scrollY)
   }
 
-  @Test fun horizontalMirroringStillRevealsSelectedText() = withScroll(inverted = false) { scroll, text ->
-    scroll.scaleX = -1f
+  @Test fun horizontalScaleStillRevealsSelectedText() = withScroll(inverted = true, transform = "scaleX") { scroll, text ->
     val before = scroll.scrollY
     text.requestRectangleOnScreen(Rect(0, 0, 80, 40), true)
     assertNotEquals(before, scroll.scrollY)
   }
 
-  private fun withScroll(inverted: Boolean, check: (ReactScrollView, TextView) -> Unit) {
+  private fun withScroll(inverted: Boolean, transform: String = "scale", check: (ReactScrollView, TextView) -> Unit) {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     instrumentation.runOnMainSync {
       val appContext = instrumentation.targetContext
+      DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(appContext)
       SoLoader.init(appContext, OpenSourceMergedSoMapping)
-      com.facebook.react.uimanager.DisplayMetricsHolder.initDisplayMetricsIfNotInitialized(appContext)
       val reactContext = BridgeReactContext(appContext)
       val context = ThemedReactContext(reactContext, appContext)
       val manager = PaseoScrollPackage().createViewManager(reactContext, ReactScrollViewManager.REACT_CLASS) as ReactScrollViewManager
       val scroll = manager.createViewInstance(context)
-      // Exercise VirtualizedList's Android transform through RN's real decomposition.
-      if (inverted) manager.updateProperties(scroll, ReactStylesDiffMap(JavaOnlyMap.of(
-        "transform", JavaOnlyArray.of(JavaOnlyMap.of("scale", -1.0))
-      )))
       val content = FrameLayout(context)
       val text = TextView(context).apply {
         setText("Selectable timeline text", TextView.BufferType.SPANNABLE)
@@ -89,6 +85,13 @@ class ScrollSelectionTest {
       content.layout(0, 0, 300, 2000)
       scroll.measure(exact(300), exact(300))
       scroll.layout(0, 0, 300, 300)
+      // Apply RN's actual Android inversion through the manager's transform decomposition.
+      val transforms = JavaOnlyArray.of(JavaOnlyMap.of(transform, if (inverted) -1.0 else 1.0))
+      manager.updateProperties(scroll, ReactStylesDiffMap(JavaOnlyMap.of("transform", transforms)))
+      if (inverted && transform == "scale") {
+        assertEquals(1f, scroll.scaleY, 0f)
+        assertEquals(180f, kotlin.math.abs(scroll.rotation), 0f)
+      }
       scroll.scrollTo(0, 400)
       check(scroll, text)
     }
