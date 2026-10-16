@@ -160,7 +160,12 @@ describe("shared Markdown theme colours", () => {
       rowOddBackgroundColor: theme.colors.surface1,
       borderColor: theme.colors.border,
     });
-    expect(style.list?.color).toBe(theme.colors.foreground);
+    expect(style.list).toMatchObject({
+      color: theme.colors.foreground,
+      bulletColor: theme.colors.foregroundMuted,
+      markerColor: theme.colors.foregroundMuted,
+    });
+    expect(style.h6?.color).toBe(theme.colors.foregroundMuted);
     expect(style.taskList).toMatchObject({
       checkedTextColor: theme.colors.foregroundMuted,
       checkedColor: theme.colors.accent,
@@ -178,9 +183,9 @@ it.each([
   (_name, theme) => {
     const { markdownStyle: style } = createMarkdownStyles(theme);
     expect(style.blockquote).toMatchObject({
-      color: theme.colors.foregroundMuted,
-      backgroundColor: theme.colors.surface2,
-      borderColor: theme.colors.border,
+      color: `${theme.colors.foreground}cc`,
+      backgroundColor: theme.colors.surface1,
+      borderColor: theme.colors.surface2,
       admonitions: {
         note: { color: theme.colors.accentBright, backgroundColor: theme.colors.surface2 },
         tip: { color: theme.colors.statusSuccess, backgroundColor: theme.colors.surface2 },
