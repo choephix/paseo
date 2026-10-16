@@ -118,3 +118,73 @@ async function openSharedMarkdownFile(page: Page, name: string) {
   await returnToSharedMarkdownChat(page);
   await page.getByTestId("assistant-message").getByRole("link", { name, exact: true }).click();
 }
+
+test("linked inline code keeps code typography and wraps long paths", async ({
+  page,
+}, testInfo) => {
+  const longPath =
+    "packages/app/src/components/markdown/renderer/very-long-directory-name/another-long-directory-name/file.ts:12";
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "inline-code-style-",
+    title: "Inline code style",
+    featureValues: {
+      mockAssistantResponse:
+        "Compare `ordinary_token`, `file.ts:12`, `https://example.com`. At the end of this line open `" +
+        longPath +
+        "`.",
+    },
+    initialPrompt: "Show inline code",
+  });
+  try {
+    await session.client.waitForFinish(session.agentId, 30_000);
+    await openAgentRoute(page, session);
+    const message = page.getByTestId("assistant-message");
+    await expect(message.getByRole("link", { name: longPath, exact: true })).toBeVisible();
+    const measurements = await measureInlineCode(message);
+    await testInfo.attach("inline-code-measurements", {
+      body: JSON.stringify(measurements, null, 2),
+      contentType: "application/json",
+    });
+    expect(measurements.codes).toHaveLength(4);
+    const [plain, file, url, long] = measurements.codes;
+    for (const linked of [file, url, long]) {
+      expect(linked.fontSize).toBe(plain.fontSize);
+      expect(linked.fontFamily).toBe(plain.fontFamily);
+      expect(linked.backgroundColor).toBe(plain.backgroundColor);
+      expect(linked.color).toBe(linked.anchorColor);
+      expect(linked.color).not.toBe(plain.color);
+    }
+    expect(long.lines).toBeGreaterThan(1);
+    expect(long.right).toBeLessThanOrEqual(measurements.right + 1);
+  } finally {
+    await session.cleanup();
+  }
+});
+
+async function measureInlineCode(message: Locator) {
+  return message.evaluate((element) => {
+    // Constrain the paragraph to exercise an inline path at a line boundary.
+    const paragraph = element.querySelector("p")!;
+    paragraph.style.width = "300px";
+    const codes = Array.from(paragraph.querySelectorAll("code"), (code) => {
+      const style = getComputedStyle(code);
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      const rects = Array.from(range.getClientRects());
+      return {
+        text: code.textContent,
+        fontSize: style.fontSize,
+        fontFamily: style.fontFamily,
+        backgroundColor: style.backgroundColor,
+        color: style.color,
+        anchorColor: code.closest("a") ? getComputedStyle(code.closest("a")!).color : null,
+        whiteSpace: style.whiteSpace,
+        overflowWrap: style.overflowWrap,
+        rects: rects.map((rect) => ({ left: rect.left, right: rect.right, top: rect.top })),
+        lines: new Set(rects.map((rect) => rect.top)).size,
+        right: Math.max(...rects.map((rect) => rect.right)),
+      };
+    });
+    return { codes, right: paragraph.getBoundingClientRect().right };
+  });
+}

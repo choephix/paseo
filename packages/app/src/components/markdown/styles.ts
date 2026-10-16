@@ -60,7 +60,6 @@ export function createMarkdownStyles(
       linkVariants: {
         "^(?!https?://).+": {
           color: theme.colors.accentBright,
-          pill: { borderRadius: 4, paddingHorizontal: 3 },
         },
       },
       code: {

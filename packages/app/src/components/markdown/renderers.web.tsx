@@ -1,5 +1,5 @@
 import { Text } from "react-native";
-import { forwardRef, type ComponentProps } from "react";
+import { forwardRef, useMemo, type ComponentProps } from "react";
 import type {
   CodeBlockRendererProps,
   LinkRendererProps,
@@ -29,7 +29,15 @@ function WebCodeBlock({ code, language }: CodeBlockRendererProps) {
 
 function WebLink({ link, anchorProps, children }: LinkRendererProps) {
   const { tooltipPath, onHoverIn } = useFileLink(markdownLinkSource(link.url, link.sourceType));
-  const anchor = <a {...anchorProps}>{children}</a>;
+  const anchorStyle = useMemo(
+    () => ({ ...anchorProps.style, overflowWrap: "anywhere" as const }),
+    [anchorProps.style],
+  );
+  const anchor = (
+    <a {...anchorProps} style={anchorStyle}>
+      {children}
+    </a>
+  );
   return (
     <Tooltip delayDuration={400}>
       <TooltipTrigger asChild onHoverIn={onHoverIn}>

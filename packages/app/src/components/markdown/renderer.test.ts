@@ -200,7 +200,9 @@ it.each([
       borderColor: "transparent",
     });
     expect(style.link?.color).toBe(theme.colors.accentBright);
-    expect(style.linkVariants?.["^(?!https?://).+"]?.color).toBe(theme.colors.accentBright);
+    expect(style.linkVariants?.["^(?!https?://).+"]).toEqual({
+      color: theme.colors.accentBright,
+    });
     expect(style.thematicBreak?.color).toBe(theme.colors.border);
   },
 );

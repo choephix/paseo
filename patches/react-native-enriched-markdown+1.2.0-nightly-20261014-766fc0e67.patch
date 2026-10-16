@@ -2283,9 +2283,22 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/inde
  export type { EnrichedMarkdownTextProps } from './types/MarkdownTextProps.web';
  export type { MarkdownStyle, Md4cFlags } from './types/MarkdownStyle';
 diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx b/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx
+index 091eb19..bbee3ce 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx
 +++ b/node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx
-@@ -58,16 +58,25 @@
+@@ -48,9 +48,9 @@ function HighlightRenderer({ node, styles, renderChildren }: RendererProps) {
+   return <mark style={styles.highlight}>{renderChildren(node)}</mark>;
+ }
+ 
+-function CodeRenderer({ node, styles, renderChildren }: RendererProps) {
++function CodeRenderer({ node, styles, parentType, renderChildren }: RendererProps) {
+   return (
+-    <code style={styles.code}>{node.content ?? renderChildren(node)}</code>
++    <code style={parentType === 'Link' ? { ...styles.code, color: 'inherit' } : styles.code}>{node.content ?? renderChildren(node)}</code>
+   );
+ }
+ 
+@@ -58,16 +58,25 @@ function LinkRenderer({
    node,
    style,
    callbacks,
@@ -2312,7 +2325,7 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/Inlin
      }
    };
  
-@@ -78,18 +87,27 @@
+@@ -78,18 +87,27 @@ function LinkRenderer({
      }
    };
  
@@ -2353,9 +2366,23 @@ diff --git a/node_modules/react-native-enriched-markdown/src/web/renderers/Inlin
  
  function LatexMathInlineRenderer({
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js
+index c8311d4..d1e698c 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/InlineRenderers.js
-@@ -103,18 +103,24 @@
+@@ -92,10 +92,11 @@ function HighlightRenderer({
+ function CodeRenderer({
+   node,
+   styles,
++  parentType,
+   renderChildren
+ }) {
+   return /*#__PURE__*/_jsx("code", {
+-    style: styles.code,
++    style: parentType === 'Link' ? { ...styles.code, color: 'inherit' } : styles.code,
+     children: node.content ?? renderChildren(node)
+   });
+ }
+@@ -103,18 +104,24 @@ function LinkRenderer({
    node,
    style,
    callbacks,
@@ -2383,7 +2410,7 @@ diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderer
      }
    };
    const handleContextMenu = event => {
-@@ -125,15 +131,24 @@
+@@ -125,15 +132,24 @@ function LinkRenderer({
        });
      }
    };
