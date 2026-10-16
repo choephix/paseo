@@ -491,7 +491,7 @@ test("copying an assistant selection preserves Markdown structure and links", as
         "    - Switch Claude models and confirm each model retains its own thinking choice.",
         "    - Cover new-workspace drafts, queued launches, schedules, and editing existing schedules.",
         "    - Confirm Opus 5 exposes the Fast toggle.",
-        "    - Smoke with an older saved [Fabel/model](Fabel/model) alias and with [daemon/client](daemon/client) version drift.",
+        "    - Smoke with an older saved Fabel/model alias and with daemon/client version drift.",
       ].join("\n"),
     );
     expect(headingAndListClipboard.html).toMatch(
