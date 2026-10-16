@@ -1,5 +1,6 @@
 package sh.paseo.scroll
 
+import android.graphics.Matrix
 import android.graphics.Rect
 import com.facebook.react.ReactPackage
 import com.facebook.react.ViewManagerOnDemandReactPackage
@@ -27,9 +28,15 @@ private class PaseoScrollViewManager : ReactScrollViewManager() {
 }
 
 private class PaseoScrollView(context: ThemedReactContext) : ReactScrollView(context) {
-  // Both RN focus handling and Android selection visibility requests use this calculation.
-  // Its coordinates ignore inversion. Keep focus/selection bookkeeping, but leave timeline
-  // movement to user gestures and explicit scroll commands.
-  override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect): Int =
-    if (scaleY < 0) 0 else super.computeScrollDeltaToGetChildRectOnScreen(rect)
+  private val transformValues = FloatArray(9)
+
+  // Android VirtualizedList uses scale: -1, which RN decomposes into a 180-degree
+  // rotation with positive scaleY. Inspect the composed transform so both that
+  // inversion and a direct scaleY: -1 suppress untransformed visibility requests.
+  // Keep focus/selection bookkeeping; gestures and explicit commands still scroll.
+  override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect): Int {
+    matrix.getValues(transformValues)
+    return if (transformValues[Matrix.MSCALE_Y] < 0) 0
+      else super.computeScrollDeltaToGetChildRectOnScreen(rect)
+  }
 }
