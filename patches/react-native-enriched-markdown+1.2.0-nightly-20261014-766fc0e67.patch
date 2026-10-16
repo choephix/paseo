@@ -2601,3 +2601,227 @@ index b98d10c..b645629 100644
 -#endif
 -
  @end
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementSizeCache.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementSizeCache.kt
+new file mode 100644
+index 0000000..11911c8
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementSizeCache.kt
+@@ -0,0 +1,31 @@
++package com.swmansion.enriched.markdown
++
++/** Size-only cache: no views, spans, Contexts or callbacks survive unmount. */
++internal class MeasurementSizeCache(private val capacity: Int = 512) {
++  data class Key(val markdown: String, val propsHash: Int, val width: Float, val splitTableSegments: Boolean)
++
++  private val sizes = LinkedHashMap<Key, Long>(16, 0.75f, true)
++
++  @Synchronized
++  fun get(key: Key): Long? = sizes[key]
++
++  @Synchronized
++  fun put(key: Key, size: Long) {
++    sizes[key] = size
++    if (sizes.size > capacity) {
++      val oldest = sizes.entries.iterator()
++      oldest.next()
++      oldest.remove()
++    }
++  }
++
++  @Synchronized
++  fun removeMatchingMarkdown(markdown: String) {
++    sizes.keys.removeAll { it.markdown == markdown }
++  }
++
++  @Synchronized
++  fun clear() {
++    sizes.clear()
++  }
++}
+diff --git a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+index f4840e4..e36b444 100644
+--- a/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
++++ b/node_modules/react-native-enriched-markdown/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+@@ -66,9 +66,11 @@ object MeasurementStore {
+     val spannable: CharSequence?,
+     val paintParams: PaintParams,
+     val markdownHash: Int,
++    val sizeKey: MeasurementSizeCache.Key? = null,
+   )
+ 
+   private val data = ConcurrentHashMap<Int, MeasurementParams>()
++  private val sizes = MeasurementSizeCache()
+ 
+   // Store font scaling settings per view ID
+   private data class FontScalingSettings(
+@@ -133,7 +135,10 @@ object MeasurementStore {
+           YogaMeasureOutput.getHeight(newSize) + PixelUtil.toDIPFromPixel(trailingMarginBottomPx),
+         )
+     }
+-    data[id] = MeasurementParams(width, newSize, spannable, paintParams, existingHash)
++    if (oldSize != newSize) {
++      cached?.sizeKey?.let { sizes.removeMatchingMarkdown(it.markdown) }
++    }
++    data[id] = MeasurementParams(width, newSize, spannable, paintParams, existingHash, cached?.sizeKey)
+     return oldSize != newSize
+   }
+ 
+@@ -144,7 +149,7 @@ object MeasurementStore {
+   }
+ 
+   fun invalidate(id: Int) {
+-    data.remove(id)
++    data.remove(id)?.sizeKey?.let { sizes.removeMatchingMarkdown(it.markdown) }
+   }
+ 
+   // Content-box width (px) the measure pass last wrapped at; the display view insets to match (#805).
+@@ -212,7 +217,7 @@ object MeasurementStore {
+     val previous = fontScalingSettings[viewId]
+     fontScalingSettings[viewId] = FontScalingSettings(allowFontScaling, maxFontSizeMultiplier)
+     if (previous != null && (previous.allowFontScaling != allowFontScaling || previous.maxFontSizeMultiplier != maxFontSizeMultiplier)) {
+-      data.remove(viewId)
++      invalidate(viewId)
+     }
+   }
+ 
+@@ -285,7 +290,43 @@ object MeasurementStore {
+ 
+     val fontScale = checkAndUpdateFontScale(context, allowFontScaling, maxFontSizeMultiplier)
+ 
+-    // Split measurement always goes through the full measure path (no spannable caching)
++    // Use resolved layout settings, including values supplied by native setters.
++    var layoutHash = computePropsHash(props, allowFontScaling, fontScale, maxFontSizeMultiplier)
++    layoutHash = 31 * layoutHash + resolveBreakStrategy(id)
++    layoutHash = 31 * layoutHash + resolveMaxLines(id)
++    layoutHash = 31 * layoutHash + (resolveEllipsize(id)?.hashCode() ?: 0)
++    layoutHash = 31 * layoutHash + props.getBooleanOrDefault("streamingAnimation", false).hashCode()
++    layoutHash = 31 * layoutHash + (id?.let { streamingTableModes[it] } ?: TableStreamingMode.PROGRESSIVE).hashCode()
++    layoutHash = 31 * layoutHash + (id?.let { streamingCodeBlockModes[it] } ?: CodeBlockStreamingMode.PROGRESSIVE).hashCode()
++    layoutHash = 31 * layoutHash + context.resources.displayMetrics.density.toBits()
++    val key = MeasurementSizeCache.Key(props.getStringOrDefault("markdown", ""), layoutHash, width, splitTableSegments)
++    val cached = id?.let { data[it] }
++    if (cached?.sizeKey == key) return cached.cachedSize
++    sizes.get(key)?.let { size ->
++      if (id != null) {
++        data[id] = MeasurementParams(width, size, null, PaintParams(Typeface.DEFAULT, 0f), 0, key)
++      }
++      return size
++    }
++
++    val size = measureUncached(context, id, width, props, splitTableSegments, allowFontScaling, fontScale, maxFontSizeMultiplier)
++    sizes.put(key, size)
++    if (id != null) {
++      data.computeIfPresent(id) { _, measured -> measured.copy(sizeKey = key) }
++    }
++    return size
++  }
++
++  private fun measureUncached(
++    context: Context,
++    id: Int?,
++    width: Float,
++    props: ReadableMap?,
++    splitTableSegments: Boolean,
++    allowFontScaling: Boolean,
++    fontScale: Float,
++    maxFontSizeMultiplier: Float,
++  ): Long {
+     if (splitTableSegments) {
+       return measureAndCacheSplit(context, id, width, props, allowFontScaling, fontScale, maxFontSizeMultiplier)
+     }
+@@ -295,7 +336,7 @@ object MeasurementStore {
+ 
+     val currentHash = computePropsHash(props, allowFontScaling, fontScale, maxFontSizeMultiplier)
+ 
+-    if (cached.markdownHash != currentHash) {
++    if (cached.markdownHash != currentHash || cached.spannable == null) {
+       return measureAndCache(context, safeId, width, props, allowFontScaling, fontScale, maxFontSizeMultiplier)
+     }
+ 
+@@ -332,8 +373,11 @@ object MeasurementStore {
+     val imageRequestHeaders = parseImageRequestHeaders(props.getArrayOrNull("imageRequestHeaders"))
+     val linkPillContent = parseLinkPillContent(props.getArrayOrNull("linkPillContent"))
+     var result = markdown.hashCode()
+-    result = 31 * result + (styleMap?.hashCode() ?: 0)
+-    result = 31 * result + (md4cFlagsMap?.hashCode() ?: 0)
++    // ReadableNativeArray hashes its backing array identity, not its values.
++    result = 31 * result + (styleMap?.toHashMap()?.hashCode() ?: 0)
++    result = 31 * result + (md4cFlagsMap?.toHashMap()?.hashCode() ?: 0)
++    result = 31 * result + props.getBooleanOrDefault("isGFM", false).hashCode()
++    result = 31 * result + props.getStringOrDefault("textBreakStrategy", BreakStrategyUtils.DEFAULT_STRATEGY).hashCode()
+     result = 31 * result + parseLinkRecognition(props.getMapOrNull("linkRecognition")).hashCode()
+     result = 31 * result + fontScale.toBits()
+     result = 31 * result + allowFontScaling.hashCode()
+@@ -356,6 +400,7 @@ object MeasurementStore {
+       if (lastKnownFontScale != 1.0f) {
+         lastKnownFontScale = 1.0f
+         data.clear()
++        sizes.clear()
+       }
+       return 1.0f
+     }
+@@ -368,6 +413,7 @@ object MeasurementStore {
+     if (currentFontScale != lastKnownFontScale) {
+       lastKnownFontScale = currentFontScale
+       data.clear()
++      sizes.clear()
+     }
+     return currentFontScale
+   }
+diff --git a/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/MeasurementSizeCacheTest.kt b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/MeasurementSizeCacheTest.kt
+new file mode 100644
+index 0000000..b3394c4
+--- /dev/null
++++ b/node_modules/react-native-enriched-markdown/android/src/test/java/com/swmansion/enriched/markdown/MeasurementSizeCacheTest.kt
+@@ -0,0 +1,51 @@
++package com.swmansion.enriched.markdown
++
++import org.junit.Assert.*
++import org.junit.Test
++
++class MeasurementSizeCacheTest {
++  private fun key(markdown: String = "hello", propsHash: Int = 1, width: Float = 320f) =
++    MeasurementSizeCache.Key(markdown, propsHash, width, true)
++
++  @Test fun reusesSizeAcrossIndependentEqualKeys() {
++    val cache = MeasurementSizeCache(2)
++    cache.put(key(), 42L)
++    assertEquals(42L, cache.get(key()))
++    assertNull(cache.get(key(propsHash = 2)))
++    assertNull(cache.get(key(width = 321f)))
++    assertNull(cache.get(key().copy(splitTableSegments = false)))
++  }
++
++  @Test fun comparesMarkdownEvenWhenItsHashCollides() {
++    val cache = MeasurementSizeCache(2)
++    assertEquals("Aa".hashCode(), "BB".hashCode())
++    cache.put(key("Aa"), 42L)
++    assertNull(cache.get(key("BB")))
++  }
++
++  @Test fun evictsLeastRecentlyUsedSize() {
++    val cache = MeasurementSizeCache(2)
++    cache.put(key("one"), 1L)
++    cache.put(key("two"), 2L)
++    assertEquals(1L, cache.get(key("one")))
++    cache.put(key("three"), 3L)
++    assertNull(cache.get(key("two")))
++    assertEquals(1L, cache.get(key("one")))
++    assertEquals(3L, cache.get(key("three")))
++  }
++
++  @Test fun invalidatesAllWidthsAndPropsForChangedContent() {
++    val cache = MeasurementSizeCache(4)
++    cache.put(key(), 1L)
++    cache.put(key(width = 640f), 2L)
++    cache.put(key(propsHash = 2), 3L)
++    cache.put(key("other"), 4L)
++    cache.removeMatchingMarkdown("hello")
++    assertNull(cache.get(key()))
++    assertNull(cache.get(key(width = 640f)))
++    assertNull(cache.get(key(propsHash = 2)))
++    assertEquals(4L, cache.get(key("other")))
++    cache.clear()
++    assertNull(cache.get(key("other")))
++  }
++}

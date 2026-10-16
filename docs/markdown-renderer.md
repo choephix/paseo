@@ -22,6 +22,8 @@ Native code blocks use the library's copy control and compiled grammars. Web cod
 
 The package patch also keeps overflowing native horizontal blocks in control of their drags: Android claims parent interception at touch-down and releases it for vertical drags so the chat list can scroll; iOS keeps its scroll recognizer active for outward drags at the leading edge. This prevents compact sidebar pans from taking block scrolling without changing sidebar swipes on prose or non-overflowing blocks. Native changes require a client rebuild.
 
+Android measurements use a size-only, 512-entry LRU across view unmounts, matching the library’s existing iOS cache. Scrolling back through history can reuse layout sizes without parsing those rows again. Content, layout props and width identify each entry; font-scale changes and native layout invalidation discard affected sizes. The cache retains no views or spans.
+
 The library determines how incomplete Markdown appears during streaming. Completed text uses the same component and engine as history. Find and scroll-to-message address source message ids; selection-copy understands semantic HTML and the web code component's copy metadata.
 
 ## Verification
