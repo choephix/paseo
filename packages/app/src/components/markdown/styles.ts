@@ -56,10 +56,10 @@ export function createMarkdownStyles(
           caution: { color: theme.colors.statusDanger, backgroundColor: theme.colors.surface2 },
         },
       },
-      link: { color: theme.colors.accent, underline: false },
+      link: { color: theme.colors.accentBright, underline: false },
       linkVariants: {
         "^(?!https?://).+": {
-          color: theme.colors.accent,
+          color: theme.colors.accentBright,
           pill: { borderRadius: 4, paddingHorizontal: 3 },
         },
       },
