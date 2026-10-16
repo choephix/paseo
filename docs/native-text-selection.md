@@ -19,6 +19,6 @@ Reopening a list marker or quote prefix on the following fragment cannot place t
 
 ## Leading inline images
 
-Native image decoders do not support SVG badges, so the renderer shows their alt text. Images that fail decoding also show alt text.
+Native image decoders do not support SVG badges, so the renderer shows their alt text. Pending images share the web placeholder: a reserved image box with a small centred image glyph; confirmed acquisition or decoding failures show alt text.
 
 The native library classifies an image from the text preceding it. A raster image at the start of a paragraph uses block sizing even when text follows; the inline size setting only affects images the library recognizes as inline. Correcting that classification requires a native library change and new app builds. JavaScript-only updates retain that classification until native app builds include a library fix.

@@ -1,10 +1,11 @@
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/utils/regexParser";
 import { QueryClient } from "@tanstack/react-query";
-import { decodeMarkdownImage } from "./image-decoding";
+import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
 import { describe, expect, it } from "vitest";
 import { darkTheme, lightTheme } from "@/styles/theme";
 import { createMarkdownStyles } from "./styles";
-import { prepareMarkdownSource } from "./source";
+import { prepareMarkdownSource, PENDING_MARKDOWN_IMAGE } from "./source";
 import { normalizeMarkdownHtml } from "./html";
 
 describe("shared Markdown source adaptation", () => {
@@ -375,7 +376,6 @@ it("retries transient image decoding failures instead of caching an unavailable 
 });
 
 it("keeps the document's first reference definition across every native Mermaid segment", async () => {
-  const { fromMarkdown } = await import("mdast-util-from-markdown");
   const { splitMermaidFences } = await import("./fence/mermaid/segments");
   const before = '[first]: /repo/first.ts "Original"\n\n';
   const after = '\n\n[open][first]\n\n[first]: /repo/second.ts "Later"';
@@ -405,7 +405,7 @@ it("reserves pending image geometry until decode succeeds and collapses only con
     new Set(prepared.images.map((image) => image.source)),
   );
   expect(pending.match(/!\[/g)).toHaveLength(2);
-  expect(pending).toContain("data:image/gif;base64,");
+  expect(pending).toContain("data:image/png;base64,");
   expect(prepared.render(new Map(), new Set(prepared.images.map((image) => image.source)))).toBe(
     "Local\n\nRemote",
   );
@@ -476,4 +476,68 @@ it("keeps prose and inline-code recognition enabled through the native regex ada
     isDisabled: false,
     isDefault: false,
   });
+});
+
+it.each([undefined, "file:///cache/shot.png"])(
+  "reserves a native workspace image while acquiring or decoding %s",
+  (url) => {
+    const status = getMarkdownImageStatus({
+      canAcquire: true,
+      url,
+      acquisitionFailed: false,
+      decodeFailed: false,
+      decoded: false,
+    });
+    expect(status).toBe("pending");
+    const prepared = prepareMarkdownSource("Before ![image](shot.png) after", undefined, {
+      supportsSvg: false,
+    });
+    const rendered = prepared.render(new Map(), new Set(), new Set(["shot.png"]));
+    expect(rendered).toBe(`Before ![image](<${PENDING_MARKDOWN_IMAGE}>) after`);
+    expect(fromMarkdown(rendered).children).toMatchObject([
+      {
+        type: "paragraph",
+        children: [
+          { type: "text", value: "Before " },
+          { type: "image", url: PENDING_MARKDOWN_IMAGE },
+          { type: "text", value: " after" },
+        ],
+      },
+    ]);
+  },
+);
+
+it.each([
+  { acquisitionFailed: true, decodeFailed: false },
+  { acquisitionFailed: false, decodeFailed: true },
+])("collapses confirmed native image failures to alt text: %s", (failure) => {
+  expect(
+    getMarkdownImageStatus({
+      canAcquire: true,
+      url: "file:///cache/shot.png",
+      decoded: false,
+      ...failure,
+    }),
+  ).toBe("unavailable");
+  const prepared = prepareMarkdownSource("Before ![image](shot.png) after", undefined, {
+    supportsSvg: false,
+  });
+  expect(prepared.render(new Map(), new Set(["shot.png"]), new Set(["shot.png"]))).toBe(
+    "Before image after",
+  );
+});
+
+it("replaces the native placeholder only after the resolved URL decodes", () => {
+  const url = "file:///cache/shot.png";
+  expect(
+    getMarkdownImageStatus({
+      canAcquire: true,
+      url,
+      acquisitionFailed: false,
+      decodeFailed: false,
+      decoded: true,
+    }),
+  ).toBe("ready");
+  const prepared = prepareMarkdownSource("![image](shot.png)", undefined, { supportsSvg: false });
+  expect(prepared.render(new Map([["shot.png", url]]))).toBe(`![image](<${url}>)`);
 });

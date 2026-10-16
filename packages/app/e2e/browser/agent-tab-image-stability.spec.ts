@@ -168,7 +168,7 @@ test("reloading a timeline reserves image height without a load-time scroll jump
     await page.reload();
     await delivery.waitUntilRequested();
     const rendered = page.getByRole("button", { name: image.alt }).first();
-    await expect(rendered).toHaveAttribute("src", /^data:image\/gif/);
+    await expect(rendered).toHaveAttribute("src", /^data:image\/png/);
     await scrollTimelinePromptIntoView(
       page,
       "image-history-turn-2: emit 1 coalesced agent stream updates",
@@ -251,7 +251,7 @@ test("a later reply reads new bytes at the same workspace image path", async ({
 test("pending assistant images reserve their decoded height", async ({
   imageWorkspace: workspace,
   page,
-}) => {
+}, testInfo) => {
   const image = await createSmallAssistantPng(workspace, {
     alt: "Delayed remote image",
     fileName: "delayed.png",
@@ -265,10 +265,13 @@ test("pending assistant images reserve their decoded height", async ({
     await emitSettledAssistantImage(workspace.client, agent, image, url);
     await openAssistantImageTimeline(page, agent);
     const rendered = page.getByRole("button", { name: image.alt }).first();
-    await expect(rendered).toHaveAttribute("src", /^data:image\/gif/);
+    await expect(rendered).toHaveAttribute("src", /^data:image\/png/);
     await delivery.waitUntilRequested();
     const pendingBox = await rendered.boundingBox();
     expect(pendingBox?.height).toBe(320);
+    await rendered.click();
+    await expect(page.getByTestId("attachment-lightbox-image")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("pending-image.png") });
     delivery.release();
     await expect(rendered).toHaveAttribute("src", url);
     expect((await rendered.boundingBox())?.height).toBe(pendingBox?.height);

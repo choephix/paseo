@@ -15,7 +15,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { resolveMarkdownPreviewImageSource } from "./image-source";
 import { prepareMarkdownSource } from "./source";
-import { decodeMarkdownImage } from "./image-decoding";
+import { decodeMarkdownImage, getMarkdownImageStatus } from "./image-decoding";
 
 const urls = createAssistantImageAcquisitionCache<{ uri: string; attachment: AttachmentMetadata }>({
   capacity: 500,
@@ -111,27 +111,21 @@ export function useMarkdownSource(text: string, context: MarkdownImageContext) {
       },
     })),
   );
-  const unavailableImages = new Set(
-    sources.filter((_source, index) =>
-      isWeb
-        ? (!acquisitions[index] && displayUrls[index] === undefined) ||
-          results[index]?.isError ||
-          decoded[index]?.isError
-        : displayUrls[index] !== undefined && decoded[index]?.data !== true,
-    ),
+  const statuses = sources.map((_source, index) =>
+    getMarkdownImageStatus({
+      canAcquire: acquisitions[index] !== null,
+      url: displayUrls[index],
+      acquisitionFailed: results[index].isError,
+      decodeFailed: decoded[index].isError,
+      decoded: decoded[index].data === true,
+    }),
   );
+  const unavailableImages = new Set(
+    sources.filter((_source, index) => statuses[index] === "unavailable"),
+  );
+  const pendingImages = new Set(sources.filter((_source, index) => statuses[index] === "pending"));
   return {
-    markdown: prepared.render(
-      resolved,
-      unavailableImages,
-      new Set(
-        isWeb
-          ? sources.filter(
-              (source, index) => !unavailableImages.has(source) && decoded[index]?.data !== true,
-            )
-          : [],
-      ),
-    ),
+    markdown: prepared.render(resolved, unavailableImages, pendingImages),
     linkRecognition: prepared.linkRecognition,
     linkSource: prepared.linkSource,
     imageSources: Object.fromEntries([...resolved].map(([source, url]) => [url, source])),
