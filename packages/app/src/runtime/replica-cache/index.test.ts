@@ -256,6 +256,78 @@ function deleteDirectory(cache: ReplicaCache, serverId: string): void {
 }
 
 describe("ReplicaCache", () => {
+  it.each([true, false, undefined])(
+    "preserves background visibility (%s) when reopening a cached workspace",
+    async (background) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const baseline = directory();
+      baseline.workspaces.set(
+        "workspace-1",
+        normalizeWorkspaceDescriptor({ ...workspacePayload(), background }),
+      );
+      commitDirectory(writer, SERVER_ID, baseline);
+      await writer.flush();
+
+      const reader = createCache(storage);
+      expect(
+        (await reader.readDirectory(SERVER_ID)).workspaces.get("workspace-1")?.background,
+      ).toBe(background ?? false);
+      expect((await reader.readWorkspace(SERVER_ID, "workspace-1"))?.workspace.background).toBe(
+        background ?? false,
+      );
+    },
+  );
+
+  it.each(["directory", "workspace"] as const)(
+    "refetches workspaces cached without background visibility after a %s read",
+    async (readKind) => {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const checkpoint = {
+        agents: { generation: "g", afterSeq: 12 },
+        projects: { generation: "g", afterSeq: 4 },
+        workspaces: { generation: "g", afterSeq: 8 },
+      };
+      const baseline = directory(checkpoint);
+      commitDirectory(writer, SERVER_ID, baseline);
+      writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+      await writer.flush();
+      const key = `${SERVER_ID}:workspace:workspace-1`;
+      const row = storage.rows.get(key)!;
+      const payload = JSON.parse(row.payload) as Record<string, unknown>;
+      delete payload.background;
+      storage.rows.set(key, { ...row, payload: JSON.stringify(payload) });
+
+      const reader = createCache(storage);
+      if (readKind === "workspace") {
+        expect(await reader.readWorkspace(SERVER_ID, "workspace-1")).toBeUndefined();
+      }
+      const restored = await reader.readDirectory(SERVER_ID);
+      expect(restored.workspaces.size).toBe(0);
+      expect(restored.checkpoint).toEqual({
+        agents: checkpoint.agents,
+        projects: checkpoint.projects,
+      });
+      expect(restored.agents).toEqual(baseline.agents);
+      expect(restored.projects).toEqual(baseline.projects);
+      expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+      expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+        restored.checkpoint,
+      );
+
+      baseline.workspaces.set(
+        "workspace-1",
+        normalizeWorkspaceDescriptor({ ...workspacePayload(), background: true }),
+      );
+      reader.replaceDirectoryBaseline(SERVER_ID, baseline);
+      await reader.flush();
+      const refreshed = await createCache(storage).readDirectory(SERVER_ID);
+      expect(refreshed.workspaces.get("workspace-1")?.background).toBe(true);
+      expect(refreshed.checkpoint).toEqual(checkpoint);
+    },
+  );
+
   it("rejects pre-baseline-fix checkpoints without discarding cached rows or timelines", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
