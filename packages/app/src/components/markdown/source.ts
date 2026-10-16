@@ -16,20 +16,31 @@ const LINE_SUFFIX = String.raw`(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?`;
 const FILE_EXTENSIONS = [...ASSISTANT_FILE_EXTENSIONS]
   .map((extension) => extension.replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`))
   .join("|");
-const SEPARATED_PATH = String.raw`(?:[A-Za-z]:[\\/]|\.{0,2}\/|~\/)?(?=${PATH_CHARACTER}*(?:[\\/]${PATH_CHARACTER}*)*${PATH_LETTER})${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})+`;
+const PATH_PREFIX = String.raw`(?:[A-Za-z]:[\\/]|\.{0,2}\/|~\/)`;
+const HAS_PATH_LETTER = String.raw`(?=${PATH_CHARACTER}*(?:[\\/]${PATH_CHARACTER}*)*${PATH_LETTER})`;
+const SEPARATED_PATH = String.raw`${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})+`;
 const FILE_NAME = String.raw`${PATH_SEGMENT}\.(?:${FILE_EXTENSIONS})`;
-// The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
-const FILE_PATTERN = new RegExp(
-  String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${SEPARATED_PATH}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
-  "g",
-);
+// Bare prose paths need a known extension, a line suffix, or at least two separators.
+const PROSE_PATH = String.raw`(?:${PATH_PREFIX}${HAS_PATH_LETTER}${SEPARATED_PATH}|${HAS_PATH_LETTER}(?:${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})*[\\/]${FILE_NAME}|${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT}){2,}|${SEPARATED_PATH}(?=:)))`;
+const INLINE_CODE_PATH = String.raw`${PATH_PREFIX}?${HAS_PATH_LETTER}${SEPARATED_PATH}`;
+
+function createFilePattern(path: string): RegExp {
+  // The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
+  return new RegExp(
+    String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${path}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+    "g",
+  );
+}
+
+const FILE_PATTERN = createFilePattern(PROSE_PATH);
+const INLINE_CODE_FILE_PATTERN = createFilePattern(INLINE_CODE_PATH);
 
 function linkMetadata() {
   return {
     linkRecognition: {
       text: FILE_PATTERN,
       inlineCode: new RegExp(
-        String.raw`^(?:${FILE_PATTERN.source})(?:\(\d+(?:,\d+)?(?:-\d+(?:,\d+)?)?\)| lines? \d+(?:-\d+)?)?$`,
+        String.raw`^(?:${INLINE_CODE_FILE_PATTERN.source})(?:\(\d+(?:,\d+)?(?:-\d+(?:,\d+)?)?\)| lines? \d+(?:-\d+)?)?$`,
       ),
     },
     linkSource: markdownLinkSource,

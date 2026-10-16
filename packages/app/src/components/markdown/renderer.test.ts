@@ -444,14 +444,20 @@ it.each([
 it.each([
   "src/index.ts",
   "README.md",
-  "packages/app",
   "./scripts/run",
+  "./x/y",
+  "../x/y",
+  "/x/y",
+  "a/b/c",
+  String.raw`C:\Users\x`,
+  "src/index.ts:12:3",
+  "src/run:12",
+  "src/run:12:3",
+  "src/run:12-20",
   "~/dev/paseo",
   String.raw`C:\Users\x\file.txt`,
   "file.ts:12",
   "file.ts:12-20",
-  "123/file",
-  "src/123",
   "123.ts",
   "FILE.TS",
   "https://example.com/path",
@@ -460,6 +466,20 @@ it.each([
   expect(
     [...`Open ${token} then continue.`.matchAll(linkRecognition.text)].map(([text]) => text),
   ).toEqual([token]);
+  expect(linkRecognition.inlineCode.test(token)).toBe(true);
+});
+
+it.each([
+  "before/after",
+  "and/or",
+  "input/output",
+  "read/write",
+  "packages/app",
+  "123/file",
+  "src/123",
+])("requires stronger path intent in prose while preserving inline code: %s", (token) => {
+  const { linkRecognition } = prepareMarkdownSource(`Compare ${token}, then continue.`);
+  expect([...`Compare ${token}, then continue.`.matchAll(linkRecognition.text)]).toEqual([]);
   expect(linkRecognition.inlineCode.test(token)).toBe(true);
 });
 
