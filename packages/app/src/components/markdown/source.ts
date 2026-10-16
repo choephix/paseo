@@ -1,3 +1,4 @@
+import { ASSISTANT_FILE_EXTENSIONS } from "@/assistant-file-links/extensions";
 import { normalizeMarkdownHtml } from "./html";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
@@ -8,8 +9,20 @@ import type { Link, Nodes, Root } from "mdast";
 
 // Keep this regex in the syntax shared by JavaScript, ICU and java.util.regex.
 // The Unicode flag makes Metro expand it to escapes rejected by native engines.
-const FILE_PATTERN =
-  /(?:https?:\/\/[^\s<>]+|(?:[A-Za-z]:[\\/]|\.{0,2}\/|~\/)?[a-zA-Z0-9\u0080-\uFFFF_@.%+-]+(?:[\\/][a-zA-Z0-9\u0080-\uFFFF_@.%+-]+)+(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?|[a-zA-Z0-9\u0080-\uFFFF_@%-]+\.[a-zA-Z0-9\u0080-\uFFFF_%-]+(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?)/g;
+const PATH_CHARACTER = String.raw`[a-zA-Z0-9\u0080-\uFFFF_@.%+-]`;
+const PATH_LETTER = String.raw`[a-zA-Z]`;
+const PATH_SEGMENT = String.raw`${PATH_CHARACTER}*[a-zA-Z0-9\u0080-\uFFFF_@%+-]`;
+const LINE_SUFFIX = String.raw`(?::\d+(?::\d+)?(?:-\d+(?::\d+)?)?)?`;
+const FILE_EXTENSIONS = [...ASSISTANT_FILE_EXTENSIONS]
+  .map((extension) => extension.replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`))
+  .join("|");
+const SEPARATED_PATH = String.raw`(?:[A-Za-z]:[\\/]|\.{0,2}\/|~\/)?(?=${PATH_CHARACTER}*(?:[\\/]${PATH_CHARACTER}*)*${PATH_LETTER})${PATH_SEGMENT}(?:[\\/]${PATH_SEGMENT})+`;
+const FILE_NAME = String.raw`${PATH_SEGMENT}\.(?:${FILE_EXTENSIONS})`;
+// The native adapter mistakes a literal + in lookbehind for a quantifier; use its hex escape.
+const FILE_PATTERN = new RegExp(
+  String.raw`(?:https?://[^\s<>]+|(?<![a-zA-Z0-9\u0080-\uFFFF_@.%\x2b~:/\\-])(?:${SEPARATED_PATH}|${FILE_NAME})${LINE_SUFFIX}(?![a-zA-Z0-9\u0080-\uFFFF_@%+:/\\-]|\.${PATH_CHARACTER}))`,
+  "g",
+);
 
 function linkMetadata() {
   return {

@@ -1,3 +1,4 @@
+import { toNativeLinkRecognition } from "react-native-enriched-markdown/src/utils/regexParser";
 import { QueryClient } from "@tanstack/react-query";
 import { decodeMarkdownImage } from "./image-decoding";
 import { describe, expect, it } from "vitest";
@@ -411,4 +412,61 @@ it("normalizes a large HTML table into one block per row", () => {
   expect(rendered.split("\n\n")).toHaveLength(rows);
   expect(rendered.startsWith(`${cell} ${cell}`)).toBe(true);
   expect(rendered.endsWith(`${cell} ${cell}`)).toBe(true);
+});
+
+it.each([
+  "3/4",
+  "1.5",
+  "v1.2",
+  "10/10",
+  "2024/10/16",
+  "10.0.0.1",
+  "word.word",
+  "example.com",
+  "file.tsxextra",
+  "v1.2.3-beta",
+  "123/456.789",
+  "×/÷",
+  "２０２４/１０/１６",
+])("leaves non-path tokens unlinked in prose and inline code: %s", (token) => {
+  const { linkRecognition } = prepareMarkdownSource(`Value ${token}, then continue.`);
+  expect([...`Value ${token}, then continue.`.matchAll(linkRecognition.text)]).toEqual([]);
+  expect(linkRecognition.inlineCode.test(token)).toBe(false);
+});
+
+it.each([
+  "src/index.ts",
+  "README.md",
+  "packages/app",
+  "./scripts/run",
+  "~/dev/paseo",
+  String.raw`C:\Users\x\file.txt`,
+  "file.ts:12",
+  "file.ts:12-20",
+  "123/file",
+  "src/123",
+  "123.ts",
+  "FILE.TS",
+  "https://example.com/path",
+])("recognizes complete paths and URLs in prose and inline code: %s", (token) => {
+  const { linkRecognition } = prepareMarkdownSource(`Open ${token} then continue.`);
+  expect(
+    [...`Open ${token} then continue.`.matchAll(linkRecognition.text)].map(([text]) => text),
+  ).toEqual([token]);
+  expect(linkRecognition.inlineCode.test(token)).toBe(true);
+});
+
+it("keeps prose and inline-code recognition enabled through the native regex adapter", () => {
+  const { linkRecognition } = prepareMarkdownSource("3/4 src/index.ts");
+  const native = toNativeLinkRecognition(linkRecognition);
+  expect(native.text).toMatchObject({
+    pattern: linkRecognition.text.source,
+    isDisabled: false,
+    isDefault: false,
+  });
+  expect(native.inlineCode).toMatchObject({
+    pattern: linkRecognition.inlineCode.source,
+    isDisabled: false,
+    isDefault: false,
+  });
 });
