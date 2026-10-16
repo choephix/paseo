@@ -13,6 +13,7 @@ import { MarkdownRendererFrame } from "./frame";
 import { WEB_RENDERERS } from "./renderers";
 import { createMarkdownStyles } from "./styles";
 import { PENDING_MARKDOWN_IMAGE } from "./source";
+import { splitStreamingMarkdown } from "./streaming";
 import { useMarkdownSource, type MarkdownImageContext } from "./images";
 
 import { MermaidFence, MermaidStreamingContext, splitMermaidFences } from "./fence/mermaid";
@@ -32,13 +33,31 @@ export interface MarkdownRendererProps extends MarkdownImageContext {
 }
 
 /** All Markdown surfaces share the same engine and source adaptation. */
-export const MarkdownRenderer = memo(function MarkdownRenderer({
+export const MarkdownRenderer = memo(function MarkdownRenderer(props: MarkdownRendererProps) {
+  const streaming = !isWeb && !!props.streaming;
+  // Only completed lines affect block closure. Do not run mdast on every reveal frame.
+  const completeLines = streaming ? props.text.slice(0, props.text.lastIndexOf("\n") + 1) : "";
+  const boundary = useMemo(
+    () => splitStreamingMarkdown(completeLines, true).head.length,
+    [completeLines],
+  );
+  if (!streaming || boundary === 0) return <MarkdownPart {...props} />;
+  return (
+    <>
+      <MarkdownPart {...props} text={props.text.slice(0, boundary)} continues />
+      <MarkdownPart {...props} text={props.text.slice(boundary)} />
+    </>
+  );
+});
+
+const MarkdownPart = memo(function MarkdownPart({
   text,
+  continues = false,
   compact = false,
   streaming = false,
   onLinkPress,
   ...imageContext
-}: MarkdownRendererProps) {
+}: MarkdownRendererProps & { continues?: boolean }) {
   const environment = useAssistantFileLinkEnvironment();
   const actions = useAssistantFileLinkActions();
   const client =
@@ -80,11 +99,13 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
             uniProps={compact ? compactStyle : regularStyle}
             flavor="github"
             selectable
+            allowTrailingMargin={continues && segment === segments[segments.length - 1]}
             md4cFlags={MD4C_FLAGS}
             linkRecognition={linkRecognition}
             enableTaskListItemToggle={false}
             enableLinkPreview={false}
             enableBlockContextMenu={false}
+            // JS reveal owns pacing; native fade animation is a separate experiment.
             streamingAnimation={false}
             onLinkPress={pressLink}
             onImagePress={pressImage}

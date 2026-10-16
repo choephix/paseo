@@ -2,7 +2,7 @@
 
 Use `MarkdownRenderer` for chat replies, file previews, plans, pull requests and changelog content. It uses `react-native-enriched-markdown` on iOS, Android and web. Keep source adaptation and renderer configuration in `components/markdown`; consumers supply Markdown and, when needed, its file location.
 
-Native selection belongs to the library's text view. Keep an assistant message in one row so selection can cross paragraphs, headings and lists. Code blocks and tables use the library's native views and their selection behavior. Web uses browser selection over semantic HTML. Once its WASM parser is initialized, the library parses synchronously for the first commit of each mounted row; an empty interim row would corrupt virtualized measurements and move the reader. Chat owns paced reveal, the web render cap, message identity and list measurement. Native receives complete messages.
+Native selection belongs to the library's text view. Keep an assistant message in one row so selection can cross paragraphs, headings and lists. Code blocks and tables use the library's native views and their selection behavior. Web uses browser selection over semantic HTML. Once its WASM parser is initialized, the library parses synchronously for the first commit of each mounted row; an empty interim row would corrupt virtualized measurements and move the reader. Chat owns paced reveal, the web render cap, message identity and list measurement. Native renders completed messages together. While streaming, it keeps closed blocks in one head view and updates a separate tail, then reunites the text on completion. See [native parsing cost](agent-stream-performance.md#native-parsing-cost) for the boundary and pacing constraints.
 
 ## Links and images
 

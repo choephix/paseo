@@ -29,7 +29,7 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
 - **The coalescer is leading + trailing.** The first delta after an idle window flushes synchronously; only the rest of the burst waits for the trailing timer. Reverting to trailing-only adds a full window to the first character of every turn. Same shape and the same reason as `TerminalOutputCoalescer`.
 - **The leading flush adds a canonical row, and that is fine.** A burst's first chunk lands as its own timeline row. `mergeAssistantChunks` / `mergeReasoningChunks` in `timeline-projection.ts` join contiguous same-turn rows, and clients read the projected timeline, so history is unaffected. Tests that assert on raw rows have to account for the extra row; tests that assert on what a client sees do not.
 - **The store holds the full text; only the rendered slice is paced.** Copy, selection, the chat outline, and scroll geometry all read the same string the user can see. Pacing the store instead would leave the bottom anchor chasing a content height that is ahead of the reveal.
-- **One source assistant message is one display row.** Presentation projects plugin output and caches unchanged history. The shared [Markdown renderer](markdown-renderer.md) owns rendering on every platform. Chat paces the visible source and applies a 32,000-character render cap on web; native keeps the complete message. It does not split Markdown or promote completed blocks into history.
+- **One source assistant message is one display row.** Presentation projects plugin output and caches unchanged history. The shared [Markdown renderer](markdown-renderer.md) owns rendering on every platform. Chat paces the visible source and applies a 32,000-character render cap on web; native keeps the complete message. The native renderer keeps closed blocks in a stable head and sends the paced suffix to a separate tail view during streaming; completion reunites them for selection. This stays inside the renderer, without promoting blocks into timeline history.
 - **Message identity survives completion.** Assistant row ids are source message ids. Plugin rows can replace a source, so find, scroll-to-message and history reveal still use `getStreamItemMessageId`. Width-specific measurements describe whole rendered messages.
 - **First sight of a text is revealed whole.** Only growth is paced. This is what makes history hydration, timeline replay, a virtualized row remounting on scroll, and an already-finished message all render complete on first paint without a special case for each.
 - **Leaving `phase: "streaming"` snaps the reveal.** A completed turn must never be left holding characters. `layoutStream` sets the phase, so anything outside the live head with an active turn is already complete.
@@ -43,6 +43,12 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
   through that hook; the web viewport once skipped it and history hosts of a live tool group went
   stale. A new field on `StreamLayoutItem` must be added to `areLayoutItemsEquivalent`, or sharing
   silently stops.
+
+## Native parsing cost
+
+The native library reparses and measures its entire `markdown` prop on each update. During streaming, the renderer splits source at an mdast block boundary and memoizes the head, so per-frame updates parse only the tail. Boundary discovery runs when a source line completes, rather than on every reveal frame. The unfinished line and final parsed block stay in the tail, preserving list continuation, setext headings, tables and open fences. Reference-dependent source and HTML retain a larger tail because later source can change their meaning. A single long block therefore still carries its full parsing cost.
+
+Completion restores one native text view per Mermaid-delimited segment, so selection crosses prose paragraphs again. The head retains its trailing block margin while split. JS reveal remains the pacing source; native opacity animation stays disabled.
 
 ## Measuring
 

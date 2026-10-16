@@ -1,6 +1,6 @@
 # Native text selection
 
-Keep assistant prose in one native text view so selection crosses paragraphs, headings and lists. The shared [Markdown renderer](markdown-renderer.md) owns that view.
+Keep completed assistant prose in one native text view so selection crosses paragraphs, headings and lists. The shared [Markdown renderer](markdown-renderer.md) owns that view.
 
 ## Android inverted chat
 
