@@ -481,6 +481,8 @@ function withOmpCapabilities(): AgentCapabilityFlags {
     ...OMP_CORE_CAPABILITIES,
     supportsMcpServers: true,
     supportsNativePaseoTools: true,
+    // OmpHistorySession replays the session file without starting `omp`.
+    supportsRuntimeFreeHistory: true,
   };
 }
 

@@ -57,7 +57,12 @@ import {
   resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
-import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
+import {
+  ensureAgentHistoryLoaded,
+  ensureAgentLoaded,
+  ensureUnarchivedAgentLoaded,
+  type AgentHistoryLoadResult,
+} from "./agent/agent-loading.js";
 import {
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -4904,24 +4909,11 @@ export class Session {
     const agentIds = Array.isArray(agentId) ? agentId : [agentId];
 
     try {
-      await Promise.all(
-        agentIds.map((id) =>
-          ensureAgentLoaded(id, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.sessionLogger,
-          }),
-        ),
-      );
+      // Attention is stored state; clearing it (a client focusing a tab) never loads the agent.
       await Promise.all(agentIds.map((id) => this.agentManager.clearAgentAttention(id)));
       if (requestId) {
         const agents = (
-          await Promise.all(
-            agentIds.map(async (id) => {
-              const agent = this.agentManager.getAgent(id);
-              return agent ? this.buildAgentPayload(agent) : null;
-            }),
-          )
+          await Promise.all(agentIds.map((id) => this.getAgentPayloadById(id)))
         ).filter((payload): payload is NonNullable<typeof payload> => payload !== null);
         this.emit({
           type: "clear_agent_attention_response",
@@ -5006,6 +4998,18 @@ export class Session {
     try {
       const existing = this.agentManager.getAgent(agentId);
       const stored = existing ? null : await this.agentStorage.get(agentId);
+      if (
+        stored &&
+        !stored.archivedAt &&
+        this.agentManager.supportsRuntimeFreeHistory(stored.provider)
+      ) {
+        // Typing `/` in a closed (sleeping) agent's composer must not start it.
+        this.emit({
+          type: "list_commands_response",
+          payload: { agentId, commands: [], error: null, requestId },
+        });
+        return;
+      }
       const agent =
         existing || (stored && !stored.archivedAt)
           ? await ensureAgentLoaded(agentId, {
@@ -7740,12 +7744,8 @@ export class Session {
       : undefined;
 
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
+      const loaded = await this.loadAgentForReading(msg.agentId);
+      const agentPayload = await this.buildLoadedAgentPayload(loaded);
 
       const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction,
@@ -7793,7 +7793,7 @@ export class Session {
             ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
             entries: entries.map((entry) => {
               const payloadEntry = {
-                provider: snapshot.provider,
+                provider: agentPayload.provider,
                 item: entry.item,
                 timestamp: entry.timestamp,
                 seqStart: entry.seqStart,
@@ -7870,11 +7870,7 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadAgentForReading(msg.agentId);
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const { epoch } = this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
@@ -7923,11 +7919,7 @@ export class Session {
     source?: object,
   ): Promise<void> {
     try {
-      await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadAgentForReading(msg.agentId);
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
       const timeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
@@ -7971,11 +7963,7 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.list.request" }>,
   ): Promise<void> {
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadAgentForReading(msg.parentAgentId, { unarchivedOnly: true });
       this.emit({
         type: "agent.provider_subagents.list.response",
         payload: {
@@ -8004,11 +7992,7 @@ export class Session {
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
-      await ensureUnarchivedAgentLoaded(msg.parentAgentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
+      await this.loadAgentForReading(msg.parentAgentId, { unarchivedOnly: true });
       const descriptor = this.agentManager.getProviderSubagent(msg.parentAgentId, msg.subagentId);
       if (!descriptor) {
         throw new Error("Provider subagent not found");
@@ -8102,12 +8086,8 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.fork_context.request" }>,
   ): Promise<void> {
     try {
-      const snapshot = await ensureAgentLoaded(msg.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.sessionLogger,
-      });
-      const agentPayload = await this.buildAgentPayload(snapshot);
+      const loaded = await this.loadAgentForReading(msg.agentId);
+      const agentPayload = await this.buildLoadedAgentPayload(loaded);
       const timeline = this.agentManager.fetchTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
@@ -8119,7 +8099,7 @@ export class Session {
           : null,
         boundaryMessageId: msg.boundaryMessageId,
         agentTitle: agentPayload.title,
-        cwd: snapshot.cwd,
+        cwd: loaded.live ? loaded.agent.cwd : loaded.record.cwd,
       });
 
       this.emit({
@@ -8152,6 +8132,36 @@ export class Session {
         },
       });
     }
+  }
+
+  // Reading a conversation never starts a closed OMP agent; see ensureAgentHistoryLoaded.
+  private async loadAgentForReading(
+    agentId: string,
+    options?: { unarchivedOnly?: boolean },
+  ): Promise<AgentHistoryLoadResult> {
+    const deps = {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.sessionLogger,
+    };
+    if (!options?.unarchivedOnly) {
+      return ensureAgentHistoryLoaded(agentId, deps);
+    }
+    if ((await this.agentStorage.get(agentId))?.archivedAt) {
+      throw new Error(`Agent is archived: ${agentId}`);
+    }
+    return ensureAgentHistoryLoaded(agentId, {
+      ...deps,
+      loadAgent: (id) => ensureUnarchivedAgentLoaded(id, deps),
+    });
+  }
+
+  private async buildLoadedAgentPayload(
+    loaded: AgentHistoryLoadResult,
+  ): Promise<AgentSnapshotPayload> {
+    return loaded.live
+      ? this.buildAgentPayload(loaded.agent)
+      : this.buildStoredAgentPayload(loaded.record);
   }
 
   private async prepareAgentMessage(agentId: string, text: string): Promise<void> {

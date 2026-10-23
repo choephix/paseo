@@ -1213,12 +1213,12 @@ export class AgentManager {
   }
 
   getTimeline(id: string): AgentTimelineItem[] {
-    this.requireAgent(id);
+    this.requireTimelineReader(id);
     return this.timelineStore.getItems(id);
   }
 
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
-    this.requireAgent(id);
+    this.requireTimelineReader(id);
     if (this.durableTimelineStore) {
       return projectTimelineRows({
         rows: await this.durableTimelineStore.getCommittedRows(id),
@@ -1229,12 +1229,12 @@ export class AgentManager {
   }
 
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
-    this.requireAgent(id);
+    this.requireTimelineReader(id);
     return this.timelineStore.fetch(id, options);
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
-    this.requirePublicAgent(parentAgentId);
+    this.requireTimelineReader(parentAgentId, { publicOnly: true });
     return this.providerSubagents.list(parentAgentId);
   }
 
@@ -1253,7 +1253,7 @@ export class AgentManager {
     parentAgentId: string,
     subagentId: string,
   ): ProviderSubagentDescriptor | null {
-    this.requirePublicAgent(parentAgentId);
+    this.requireTimelineReader(parentAgentId, { publicOnly: true });
     return this.providerSubagents.get(parentAgentId, subagentId);
   }
 
@@ -1262,7 +1262,7 @@ export class AgentManager {
     subagentId: string,
     options?: AgentTimelineFetchOptions,
   ): AgentTimelineFetchResult {
-    this.requirePublicAgent(parentAgentId);
+    this.requireTimelineReader(parentAgentId, { publicOnly: true });
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
   }
 
@@ -2221,12 +2221,109 @@ export class AgentManager {
   }
 
   async clearAgentAttention(agentId: string): Promise<void> {
-    const agent = this.requireAgent(agentId);
+    const liveAgent = this.agents.get(agentId);
+    if (!liveAgent) {
+      // Attention is a stored flag. Clearing it on a closed agent (a client focusing a
+      // sleeping tab) must not resume the provider just to write it.
+      await this.clearStoredAgentAttention(agentId);
+      return;
+    }
+    const agent = liveAgent;
     if (agent.attention.requiresAttention) {
       agent.attention = { requiresAttention: false };
       await this.persistSnapshot(agent);
       this.emitState(agent, { persist: false });
     }
+  }
+
+  private async clearStoredAgentAttention(agentId: string): Promise<void> {
+    await this.runLifecycleMutation(agentId, async () => {
+      if (this.agents.has(agentId)) {
+        await this.clearAgentAttention(agentId);
+        return;
+      }
+      const registry = this.requireRegistry();
+      const record = await registry.get(agentId);
+      if (!record) {
+        throw new Error(`Unknown agent '${agentId}'`);
+      }
+      if (!record.requiresAttention) {
+        return;
+      }
+      const nextRecord: StoredAgentRecord = {
+        ...record,
+        updatedAt: this.nextStoredUpdatedAt(record),
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      };
+      await registry.upsert(nextRecord);
+      this.dispatchStoredAgentState(nextRecord);
+    });
+  }
+
+  /**
+   * Makes a non-live agent's timeline readable without starting its provider runtime, for
+   * providers that can replay a stored session read-only (`supportsRuntimeFreeHistory`).
+   * The agent stays closed: reads such as opening its tab never start it. A timeline
+   * retained from an earlier close is kept as is, so its epoch and cursors stay valid, and
+   * a later interactive resume reuses it instead of replaying again. Returns false when
+   * the provider cannot do this; the caller then loads the agent as before.
+   */
+  async loadTimelineWithoutRuntime(
+    agentId: string,
+    stored: {
+      provider: AgentProvider;
+      handle: AgentPersistenceHandle | null;
+      overrides: Partial<AgentSessionConfig>;
+    },
+  ): Promise<boolean> {
+    if (!this.supportsRuntimeFreeHistory(stored.provider)) {
+      return false;
+    }
+    return this.runLifecycleMutation(agentId, async () => {
+      if (this.agents.has(agentId) || this.timelineStore.has(agentId)) {
+        return true;
+      }
+      const events: Array<Extract<AgentStreamEvent, { type: "timeline" | "provider_subagent" }>> =
+        [];
+      if (stored.handle) {
+        const session = await this.requireClient(stored.provider).resumeSession(
+          stored.handle,
+          stored.overrides,
+          undefined,
+          { purpose: "history" },
+        );
+        try {
+          for await (const rawEvent of session.streamHistory()) {
+            const event = limitAgentStreamEventContent(rawEvent);
+            if (event.type === "timeline" || event.type === "provider_subagent") {
+              events.push(event);
+            }
+          }
+        } finally {
+          await session.close();
+        }
+      }
+      if (this.agents.has(agentId) || this.timelineStore.has(agentId)) {
+        return true;
+      }
+      this.timelineStore.initialize(agentId, { timestamp: new Date().toISOString() });
+      for (const event of events) {
+        if (event.type === "provider_subagent") {
+          this.providerSubagents.apply(agentId, event.provider, event.event);
+          continue;
+        }
+        const item = projectAgentMessage(event.item);
+        if (!item) continue;
+        this.recordTimeline(agentId, item, event.timestamp ? { timestamp: event.timestamp } : {});
+      }
+      return true;
+    });
+  }
+
+  supportsRuntimeFreeHistory(provider: AgentProvider): boolean {
+    return this.clients.get(provider)?.capabilities.supportsRuntimeFreeHistory === true;
   }
 
   async markAgentUnread(agentId: string): Promise<void> {
@@ -5477,12 +5574,20 @@ export class AgentManager {
     return agent;
   }
 
-  private requirePublicAgent(id: string): LiveManagedAgent {
-    const agent = this.requireAgent(id);
-    if (agent.internal) {
-      throw new Error(`Unknown agent '${agent.id}'`);
+  // Timeline reads accept a live agent, or a closed one whose timeline is still held:
+  // retained from its last close, or loaded by loadTimelineWithoutRuntime.
+  private requireTimelineReader(id: string, options?: { publicOnly?: boolean }): void {
+    const normalizedId = validateAgentId(id, "requireTimelineReader");
+    const agent = this.agents.get(normalizedId);
+    if (agent) {
+      if (options?.publicOnly && agent.internal) {
+        throw new Error(`Unknown agent '${normalizedId}'`);
+      }
+      return;
     }
-    return agent;
+    if (!this.timelineStore.has(normalizedId)) {
+      throw new Error(`Unknown agent '${normalizedId}'`);
+    }
   }
 }
 

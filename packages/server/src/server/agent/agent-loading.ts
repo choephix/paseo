@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 
 import type { AgentProvider } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
-import type { AgentStorage } from "./agent-storage.js";
+import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import {
   buildConfigOverrides,
   buildSessionConfig,
@@ -156,4 +156,57 @@ export async function ensureAgentLoaded(
       pendingAgentInitializations.delete(agentId);
     }
   }
+}
+
+export type AgentHistoryLoadResult =
+  | { live: true; agent: ManagedAgent }
+  | { live: false; record: StoredAgentRecord };
+
+export interface EnsureAgentHistoryLoadedDeps extends EnsureAgentLoadedDeps {
+  agentManager: AgentLoaderManager & Pick<AgentManager, "loadTimelineWithoutRuntime">;
+  /** Loads agents whose provider cannot replay history without a runtime. */
+  loadAgent?: (agentId: string) => Promise<ManagedAgent>;
+}
+
+/**
+ * Loads an agent for reading its conversation. A live agent is returned as is. A closed,
+ * unarchived agent whose provider replays history without a runtime (OMP) stays closed:
+ * its timeline is served from that replay, so opening a tab, scrolling, searching or
+ * reconnecting never starts it. Only sending, an explicit wake or another real action
+ * (those call ensureAgentLoaded) does. Every other agent loads as before.
+ */
+export async function ensureAgentHistoryLoaded(
+  agentId: string,
+  deps: EnsureAgentHistoryLoadedDeps,
+): Promise<AgentHistoryLoadResult> {
+  const loadAgent = deps.loadAgent ?? ((id: string) => ensureAgentLoaded(id, deps));
+  await deps.agentManager.waitForAgentClose?.(agentId);
+  const inflight = pendingAgentInitializations.get(agentId);
+  if (inflight) {
+    return { live: true, agent: await inflight.promise };
+  }
+  const existing = deps.agentManager.getAgent(agentId);
+  if (existing) {
+    return { live: true, agent: existing };
+  }
+
+  const record = await deps.agentStorage.get(agentId);
+  if (!record) {
+    throw new AgentNotFoundError(agentId);
+  }
+  const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
+  if (record.archivedAt || !isStoredAgentProviderAvailable(record, validProviders)) {
+    return { live: true, agent: await loadAgent(agentId) };
+  }
+  const loaded = await deps.agentManager.loadTimelineWithoutRuntime(agentId, {
+    provider: record.provider,
+    handle: toAgentPersistenceHandle(validProviders, record.persistence),
+    overrides: buildConfigOverrides(record),
+  });
+  if (!loaded) {
+    return { live: true, agent: await loadAgent(agentId) };
+  }
+  // A wake may have finished while the history loaded; prefer the live agent then.
+  const woken = deps.agentManager.getAgent(agentId);
+  return woken ? { live: true, agent: woken } : { live: false, record };
 }

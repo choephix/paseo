@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
-import { ensureAgentLoaded } from "./agent-loading.js";
+import { ensureAgentHistoryLoaded, ensureAgentLoaded } from "./agent-loading.js";
 import { startAgentRun } from "./agent-prompt.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
@@ -192,6 +192,91 @@ test("loads an archived agent's history after its working directory is removed",
     expect(replies.every((item) => item.type === "assistant_message" && item.text.length > 0)).toBe(
       true,
     );
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// A client whose provider replays history without a runtime (as OMP does), recording every
+// resume so the test sees whether a read would have started the provider.
+function createHistoryReplayClient(resumePurposes: Array<string | undefined>): AgentClient {
+  const baseClient = createTestAgentClients().codex;
+  if (!baseClient) {
+    throw new Error("expected Codex test client");
+  }
+  return {
+    provider: baseClient.provider,
+    capabilities: { ...baseClient.capabilities, supportsRuntimeFreeHistory: true },
+    createSession: async (config, launchContext) =>
+      await baseClient.createSession(config, launchContext),
+    resumeSession: async (handle, overrides, launchContext, options) => {
+      resumePurposes.push(options?.purpose);
+      return await baseClient.resumeSession(handle, overrides, launchContext);
+    },
+    fetchCatalog: async (options) => await baseClient.fetchCatalog(options),
+    isAvailable: async () => await baseClient.isAvailable(),
+  };
+}
+
+test("reading a closed agent never starts it, and waking it keeps the timeline it served", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-sleep-read-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const resumePurposes: Array<string | undefined> = [];
+  const managerOptions = () => ({
+    clients: { codex: createHistoryReplayClient(resumePurposes) },
+    registry: storage,
+    logger,
+  });
+  let manager = new AgentManager(managerOptions());
+  const agentId = "00000000-0000-4000-8000-000000000601";
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: root }, agentId, {
+      workspaceId: "workspace-sleep",
+    });
+    await startAgentRun(manager, agent.id, "remember the codeword", logger, {});
+    expect((await manager.waitForAgentEvent(agent.id)).status).toBe("idle");
+    const before = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
+    await manager.closeAgent(agentId);
+
+    // Closed in this daemon run: the retained timeline is served as is, with no resume.
+    const deps = { agentManager: manager, agentStorage: storage, logger };
+    expect((await ensureAgentHistoryLoaded(agentId, deps)).live).toBe(false);
+    const retained = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
+    expect(retained.epoch).toBe(before.epoch);
+    expect(retained.rows).toEqual(before.rows);
+    expect(resumePurposes).toEqual([]);
+
+    // After a daemon restart nothing is retained: the history is replayed without a runtime.
+    await manager.flush();
+    await storage.flush();
+    manager = new AgentManager(managerOptions());
+    const restartedDeps = { agentManager: manager, agentStorage: storage, logger };
+    const loaded = await ensureAgentHistoryLoaded(agentId, restartedDeps);
+    expect(loaded.live).toBe(false);
+    expect(manager.getAgent(agentId)).toBeNull();
+    const replayed = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
+    expect(replayed.rows.some((row) => row.item.type === "assistant_message")).toBe(true);
+    expect(resumePurposes).toEqual(["history"]);
+
+    // Focusing the tab clears the finished-turn attention in storage only.
+    expect((await storage.get(agentId))?.requiresAttention).toBe(true);
+    await manager.clearAgentAttention(agentId);
+    expect((await storage.get(agentId))?.requiresAttention).toBe(false);
+    expect(resumePurposes).toEqual(["history"]);
+
+    // A real action wakes it. The timeline the client already holds stays valid: same
+    // epoch, same rows, nothing replayed a second time.
+    const woken = await ensureAgentLoaded(agentId, restartedDeps);
+    expect(woken.lifecycle).toBe("idle");
+    expect(resumePurposes).toEqual(["history", "interactive"]);
+    const afterWake = manager.fetchTimeline(agentId, { direction: "tail", limit: 0 });
+    expect(afterWake.epoch).toBe(replayed.epoch);
+    expect(afterWake.rows).toEqual(replayed.rows);
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     await manager.flush().catch(() => undefined);

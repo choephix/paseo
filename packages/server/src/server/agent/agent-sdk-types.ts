@@ -179,6 +179,11 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /**
+   * `resumeSession(..., { purpose: "history" })` replays a stored session without starting
+   * the provider runtime, so a closed agent's conversation can be read while it stays closed.
+   */
+  supportsRuntimeFreeHistory?: boolean;
 }
 
 export interface AgentPersistenceHandle {

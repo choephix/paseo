@@ -25,7 +25,7 @@ import {
 import { curateAgentActivity } from "../activity-curator.js";
 import { selectItemsByProjectedLimit } from "../timeline-projection.js";
 import type { AgentStorage } from "../agent-storage.js";
-import { AgentNotFoundError, ensureAgentLoaded } from "../agent-loading.js";
+import { AgentNotFoundError, ensureAgentHistoryLoaded } from "../agent-loading.js";
 import { isStoredAgentProviderAvailable } from "../../persistence-hooks.js";
 import {
   archiveByScope,
@@ -3161,13 +3161,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ agentId, limit }) => {
-      await ensureAgentLoaded(agentId, {
+      // Reading activity never starts a closed OMP agent; see ensureAgentHistoryLoaded.
+      const loaded = await ensureAgentHistoryLoaded(agentId, {
         agentManager,
         agentStorage,
         logger: childLogger,
       });
       const timeline = agentManager.getTimeline(agentId);
-      const snapshot = agentManager.getAgent(agentId);
+      const currentModeId = loaded.live
+        ? loaded.agent.currentModeId
+        : (loaded.record.lastModeId ?? null);
 
       const selection = selectItemsByProjectedLimit({
         items: timeline,
@@ -3190,7 +3193,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         structuredContent: ensureValidJson({
           agentId,
           updateCount: timeline.length,
-          currentModeId: snapshot?.currentModeId ?? null,
+          currentModeId: currentModeId ?? null,
           content: contentWithCount,
         }),
       };

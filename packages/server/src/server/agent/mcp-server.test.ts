@@ -242,6 +242,8 @@ function buildAgentManagerSpies() {
     getTimeline: vi.fn().mockReturnValue([]),
     resumeAgentFromPersistence: vi.fn(),
     hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
+    // These tests use Claude, whose history cannot be read without starting it.
+    loadTimelineWithoutRuntime: vi.fn().mockResolvedValue(false),
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
@@ -7281,9 +7283,10 @@ describe("agent snapshot MCP serialization", () => {
       id: "archived-activity-agent",
       currentModeId: "default",
     } as ManagedAgent;
+    // Not live for the history-read check and the loader's own lookup; live once resumed.
     spies.agentManager.getAgent
       .mockReturnValueOnce(null)
-      .mockReturnValue(snapshot)
+      .mockReturnValueOnce(null)
       .mockReturnValue(snapshot);
     spies.agentStorage.get.mockResolvedValue(record);
     spies.agentManager.resumeAgentFromPersistence.mockResolvedValue(snapshot);
