@@ -222,3 +222,30 @@ test("self-update progress is request-owned through the final delivery boundary"
   lateProgress?.();
   expect(frames).toHaveLength(3);
 });
+
+// FORK(axalon): without an injected updater the fork refuses to self-update.
+test("fork build refuses self-update by default", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const controller = new DaemonSelfUpdateSessionController({
+    clientId: "fork-client",
+    daemonVersion: "0.12.0+axalon.1",
+    sessionLogger: createTestLogger(),
+    emit: (message) => {
+      emitted.push(message);
+    },
+    emitLifecycleIntent: () => {
+      throw new Error("A refused update must not restart the daemon");
+    },
+  });
+
+  await controller.dispatch(updateRequest);
+
+  expect(emitted).toHaveLength(1);
+  expect(emitted[0]).toMatchObject({
+    type: "daemon.update.response",
+    payload: { requestId: "update-1", success: false, newVersion: null },
+  });
+  expect(emitted[0]?.type === "daemon.update.response" && emitted[0].payload.error).toContain(
+    "paseo-fork-sync",
+  );
+});

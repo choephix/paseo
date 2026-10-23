@@ -1,7 +1,6 @@
 import type pino from "pino";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import {
-  daemonSelfUpdater,
   DaemonSelfUpdateInProgressError,
   type DaemonSelfUpdatePhase,
   type DaemonSelfUpdater,
@@ -9,6 +8,18 @@ import {
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 
 type DaemonUpdateRequest = Extract<SessionInboundMessage, { type: "daemon.update.request" }>;
+
+// FORK(axalon): this daemon is a fork build. The npm self-updater would run
+// `npm install -g @getpaseo/cli@latest` and replace it with the official package,
+// so the default updater refuses. The fork is updated with `paseo-fork-sync` on the host.
+const FORK_SELF_UPDATE_DISABLED_ERROR =
+  "Self-update is disabled in this Paseo fork build (axalon). Update the fork on the host with paseo-fork-sync.";
+
+const forkDisabledUpdater: Pick<DaemonSelfUpdater, "update"> = {
+  async update() {
+    return { success: false, error: FORK_SELF_UPDATE_DISABLED_ERROR, newVersion: null };
+  },
+};
 
 const DAEMON_SELF_UPDATE_MESSAGE_TYPES: ReadonlySet<SessionInboundMessage["type"]> = new Set([
   "daemon.update.request",
@@ -51,7 +62,7 @@ export class DaemonSelfUpdateSessionController {
     this.emit = options.emit;
     this.emitLifecycleIntent = options.emitLifecycleIntent;
     this.sessionLogger = options.sessionLogger;
-    this.updater = options.updater ?? daemonSelfUpdater;
+    this.updater = options.updater ?? forkDisabledUpdater;
   }
 
   dispatch(msg: SessionInboundMessage): Promise<void> | undefined {
