@@ -75,6 +75,16 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  // Set when the daemon put the agent to sleep (closed it to free its runtime). Any snapshot
+  // of the live agent drops it, so waking clears it. Older daemons strip the field.
+  sleep: z
+    .object({
+      sleptAt: z.string(),
+      reason: z.enum(["idle", "manual"]),
+      rssBytes: z.number().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export type SerializableAgentConfig = Pick<

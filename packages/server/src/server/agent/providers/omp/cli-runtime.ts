@@ -136,6 +136,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return this.launchEnvironment;
   }
 
+  get pid(): number | undefined {
+    return this.process.pid;
+  }
+
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {

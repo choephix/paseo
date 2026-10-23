@@ -4,6 +4,7 @@ import type { DaemonClientConfig } from "./daemon-client.js";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type {
   AgentSnapshotPayload,
+  AgentSleepMarker,
   CreationSnapshot,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
@@ -47,6 +48,7 @@ export type {
 } from "./terminals/index.js";
 import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentSleepStatePayload,
   FetchAgentsEntry,
   FetchAgentsOptions,
   FetchAgentsPageInfo,
@@ -298,6 +300,9 @@ export interface PaseoAgentCommandsOptions {
 
 export type PaseoAgentCommandsResult = ListCommandsResponse["payload"];
 
+export type PaseoAgentSleepMarker = AgentSleepMarker;
+export type PaseoAgentSleepState = AgentSleepStatePayload;
+
 export type PaseoAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
 export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
@@ -378,6 +383,16 @@ export interface PaseoAgentHandle {
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
+  /**
+   * Puts this idle agent to sleep: its runtime stops and frees its memory, it stays
+   * registered, and its conversation stays readable. It wakes on `send` or `wake`. Rejects
+   * while it is running, waiting on a permission or has background work. Resolves to the
+   * sleep marker, or the existing one (null when closed some other way) if already closed.
+   * Only on daemons with `server_info.features.agentSleep`.
+   */
+  sleep(): Promise<PaseoAgentSleepMarker | null>;
+  /** Starts this agent if it is asleep (closed). Resolves to its live snapshot. */
+  wake(): Promise<PaseoAgent>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
@@ -396,6 +411,11 @@ export interface PaseoAgentActions {
    * The returned function only removes this SDK listener.
    */
   subscribe(handler: PaseoAgentUpdateHandler): () => void;
+  /**
+   * Sleep state of the daemon's agents: which are asleep and since when. Only on daemons
+   * with `server_info.features.agentSleep`.
+   */
+  sleepState(): Promise<PaseoAgentSleepState>;
 }
 
 export type PaseoProviderModelsResult = ListProviderModelsResponseMessage["payload"];
@@ -729,6 +749,7 @@ export function createPaseoApi(
       ref: (agent) => createAgentHandle(agent),
       create: (options) => createAgent(options),
       subscribe: listenAgents,
+      sleepState: () => daemonClient.getAgentSleepState(),
     },
     providers: {
       listModels: (provider, options) => daemonClient.listProviderModels(provider, options),
@@ -977,6 +998,11 @@ function createAgentHandleFactory(
           current = { ...current, archivedAt: result.archivedAt };
         }
         return result;
+      },
+      sleep: () => daemonClient.sleepAgent(id),
+      wake: async () => {
+        current = await daemonClient.wakeAgent(id);
+        return current;
       },
       detach: async () => {
         await daemonClient.detachAgent(id);

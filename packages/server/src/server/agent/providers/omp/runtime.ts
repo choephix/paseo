@@ -50,6 +50,8 @@ export interface OmpPromptInput {
 
 export interface OmpRuntimeSession {
   readonly environment: Record<string, string>;
+  /** OS process id of the `omp` process, when it runs as a child process. */
+  readonly pid?: number;
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
   // With streamingBehavior, a busy OMP queues the message instead of rejecting it, and an
   // idle OMP starts a run with it.

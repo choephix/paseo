@@ -719,6 +719,13 @@ export interface AgentSession {
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;
+  /** OS process id of the provider runtime, for measuring what sleeping it frees. */
+  getProcessId?(): number | null;
+  /**
+   * Whether the runtime still has work in flight outside a foreground turn (background
+   * jobs, queued messages). Such an agent is not put to sleep.
+   */
+  hasPendingBackgroundWork?(): Promise<boolean>;
 }
 
 export type FetchCatalogOptions = { providerOptions?: ProviderOptions } & (

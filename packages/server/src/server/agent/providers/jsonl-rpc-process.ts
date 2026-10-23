@@ -125,6 +125,10 @@ export class JsonlRpcProcess {
     });
   }
 
+  get pid(): number | undefined {
+    return this.child.pid;
+  }
+
   onMessage(callback: (message: Record<string, unknown>) => void): () => void {
     this.messageSubscribers.add(callback);
     return () => {

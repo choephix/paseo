@@ -1925,6 +1925,25 @@ export const AgentForkContextRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+// Sleeping agents: a slept agent is closed (its runtime stopped) but stays readable, and wakes
+// on send or agent.wake. Advertised by server_info.features.agentSleep.
+export const AgentSleepRequestMessageSchema = z.object({
+  type: z.literal("agent.sleep.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentWakeRequestMessageSchema = z.object({
+  type: z.literal("agent.wake.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentGetSleepStateRequestMessageSchema = z.object({
+  type: z.literal("agent.get_sleep_state.request"),
+  requestId: z.string(),
+});
+
 export const SetAgentModeRequestMessageSchema = z.object({
   type: z.literal("set_agent_mode_request"),
   agentId: z.string(),
@@ -3292,6 +3311,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
+  AgentSleepRequestMessageSchema,
+  AgentWakeRequestMessageSchema,
+  AgentGetSleepStateRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
@@ -3749,6 +3771,10 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(agentSleep): added in v0.12.0+axalon (fork), remove gate after 2027-04-23.
+        // Sleeping agents: agent.sleep / agent.wake / agent.get_sleep_state, and reads that
+        // serve a closed agent's conversation without starting it.
+        agentSleep: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4841,6 +4867,50 @@ export const AgentForkContextResponseMessageSchema = z.object({
     itemCount: z.number().int().nonnegative(),
     boundaryMessageId: z.string().nullable(),
     boundaryCursor: AgentTimelineCursorSchema.nullable().optional(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentSleepMarkerSchema = z.object({
+  sleptAt: z.string(),
+  reason: z.enum(["idle", "manual"]),
+  // Resident memory of the runtime's process tree when it was put to sleep.
+  rssBytes: z.number().nullable(),
+});
+
+export const AgentSleepResponseMessageSchema = z.object({
+  type: z.literal("agent.sleep.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    sleep: AgentSleepMarkerSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentWakeResponseMessageSchema = z.object({
+  type: z.literal("agent.wake.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    agent: AgentSnapshotPayloadSchema.nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentGetSleepStateResponseMessageSchema = z.object({
+  type: z.literal("agent.get_sleep_state.response"),
+  payload: z.object({
+    requestId: z.string(),
+    // Closed, unarchived agents whose conversation is served without starting them.
+    // `sleep` is null for one closed some other way (for example by a daemon restart).
+    asleep: z.array(
+      z.object({
+        agentId: z.string(),
+        provider: z.string(),
+        sleep: AgentSleepMarkerSchema.nullable(),
+      }),
+    ),
     error: z.string().nullable(),
   }),
 });
@@ -6939,6 +7009,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,
   AgentForkContextResponseMessageSchema,
+  AgentSleepResponseMessageSchema,
+  AgentWakeResponseMessageSchema,
+  AgentGetSleepStateResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
@@ -7160,6 +7233,12 @@ export type AgentTimelineListPromptsResponseMessage = z.infer<
   typeof AgentTimelineListPromptsResponseMessageSchema
 >;
 export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextResponseMessageSchema>;
+export type AgentSleepMarker = z.infer<typeof AgentSleepMarkerSchema>;
+export type AgentSleepResponseMessage = z.infer<typeof AgentSleepResponseMessageSchema>;
+export type AgentWakeResponseMessage = z.infer<typeof AgentWakeResponseMessageSchema>;
+export type AgentGetSleepStateResponseMessage = z.infer<
+  typeof AgentGetSleepStateResponseMessageSchema
+>;
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;

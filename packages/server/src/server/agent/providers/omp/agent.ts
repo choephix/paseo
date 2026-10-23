@@ -1231,6 +1231,23 @@ export class OmpAgentSession implements AgentSession {
     return mapOmpRuntimeSlashCommands(commands);
   }
 
+  getProcessId(): number | null {
+    return this.runtimeDead ? null : (this.runtimeSession.pid ?? null);
+  }
+
+  async hasPendingBackgroundWork(): Promise<boolean> {
+    if (this.runtimeDead) {
+      return false;
+    }
+    const state = await this.runtimeSession.getState();
+    return (
+      state.hasPendingAsyncWork === true ||
+      state.isStreaming ||
+      state.isCompacting ||
+      state.queuedMessageCount > 0
+    );
+  }
+
   tryHandleOutOfBand(
     prompt: AgentPromptInput,
   ): { run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void> } | null {

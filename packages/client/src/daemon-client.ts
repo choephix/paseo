@@ -34,6 +34,8 @@ import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outb
 import type {
   AgentStreamEventPayload,
   AgentSnapshotPayload,
+  AgentSleepMarker,
+  AgentGetSleepStateResponseMessage,
   ProjectPlacementPayload,
   AgentPermissionResolvedMessage,
   CreateAgentRequestMessage,
@@ -656,6 +658,7 @@ type ScheduleUpdatePayload = Extract<
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
+export type AgentSleepStatePayload = AgentGetSleepStateResponseMessage["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
@@ -3485,6 +3488,73 @@ export class DaemonClient {
       throw new Error(payload.error);
     }
 
+    return payload;
+  }
+
+  /**
+   * Puts an idle agent to sleep: its runtime stops, it stays registered and readable, and it
+   * wakes on send or wakeAgent. Needs server_info.features.agentSleep.
+   */
+  async sleepAgent(agentId: string, requestId?: string): Promise<AgentSleepMarker | null> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.sleep.request",
+      agentId,
+      requestId: resolvedRequestId,
+    });
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 30000,
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "agent.sleep.response" && msg.payload.requestId === resolvedRequestId
+          ? msg.payload
+          : null,
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload.sleep;
+  }
+
+  /** Starts a sleeping (closed) agent; a live agent is returned as is. */
+  async wakeAgent(agentId: string, requestId?: string): Promise<AgentSnapshotPayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.wake.request",
+      agentId,
+      requestId: resolvedRequestId,
+    });
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 120000,
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "agent.wake.response" && msg.payload.requestId === resolvedRequestId
+          ? msg.payload
+          : null,
+    });
+    if (payload.error || !payload.agent) throw new Error(payload.error ?? "Agent did not wake");
+    return payload.agent;
+  }
+
+  async getAgentSleepState(requestId?: string): Promise<AgentSleepStatePayload> {
+    const resolvedRequestId = this.createRequestId(requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.get_sleep_state.request",
+      requestId: resolvedRequestId,
+    });
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) =>
+        msg.type === "agent.get_sleep_state.response" && msg.payload.requestId === resolvedRequestId
+          ? msg.payload
+          : null,
+    });
+    if (payload.error) throw new Error(payload.error);
     return payload;
   }
 

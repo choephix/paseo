@@ -63,6 +63,7 @@ import {
   ensureUnarchivedAgentLoaded,
   type AgentHistoryLoadResult,
 } from "./agent/agent-loading.js";
+import type { AgentSleepService } from "./agent/agent-sleep.js";
 import {
   sendPromptToAgent,
   waitForAgentRunStartWithTimeout,
@@ -526,6 +527,7 @@ export interface SessionOptions {
     listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
+  agentSleep?: AgentSleepService;
   mcpBaseUrl?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   sttLanguage?: string;
@@ -745,6 +747,7 @@ export class Session {
   private readonly pushNotifications: PushNotifications;
   private readonly pluginRuntime: SessionOptions["pluginRuntime"];
   private readonly orchestrationSkills: SessionOptions["orchestrationSkills"];
+  private readonly agentSleep: SessionOptions["agentSleep"];
   private unsubscribeAgentEvents: (() => void) | null = null;
   private unsubscribeProjectMutations: (() => void) | null = null;
   private unsubscribePluginChanges: (() => void) | null = null;
@@ -842,6 +845,7 @@ export class Session {
       daemonConfigStore,
       pluginRuntime,
       orchestrationSkills,
+      agentSleep,
       stt,
       sttLanguage,
       tts,
@@ -885,6 +889,7 @@ export class Session {
     this.worktreesRoot = worktreesRoot;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
+    this.agentSleep = agentSleep;
     this.sessionLogger = logger.child({
       module: "session",
       clientId: this.clientId,
@@ -2716,6 +2721,12 @@ export class Session {
       }
       case "agent.fork_context.request":
         return this.handleAgentForkContextRequest(msg);
+      case "agent.sleep.request":
+        return this.handleAgentSleepRequest(msg);
+      case "agent.wake.request":
+        return this.handleAgentWakeRequest(msg);
+      case "agent.get_sleep_state.request":
+        return this.handleAgentGetSleepStateRequest(msg);
       default:
         return undefined;
     }
@@ -5003,10 +5014,12 @@ export class Session {
         !stored.archivedAt &&
         this.agentManager.supportsRuntimeFreeHistory(stored.provider)
       ) {
-        // Typing `/` in a closed (sleeping) agent's composer must not start it.
+        // Typing `/` in a closed (sleeping) agent's composer must not start it: answer with
+        // the commands it had when it was put to sleep, or none.
+        const commands = this.agentSleep?.getCommandsAtSleep(agentId) ?? [];
         this.emit({
           type: "list_commands_response",
-          payload: { agentId, commands: [], error: null, requestId },
+          payload: { agentId, commands, error: null, requestId },
         });
         return;
       }
@@ -8162,6 +8175,80 @@ export class Session {
     return loaded.live
       ? this.buildAgentPayload(loaded.agent)
       : this.buildStoredAgentPayload(loaded.record);
+  }
+
+  private requireAgentSleep(): AgentSleepService {
+    if (!this.agentSleep) {
+      throw new Error("Agent sleep is not available on this daemon");
+    }
+    return this.agentSleep;
+  }
+
+  private async handleAgentSleepRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.sleep.request" }>,
+  ): Promise<void> {
+    try {
+      const sleep = await this.requireAgentSleep().sleepAgent(msg.agentId, "manual");
+      this.emit({
+        type: "agent.sleep.response",
+        payload: { requestId: msg.requestId, agentId: msg.agentId, sleep, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.sleep.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          sleep: null,
+          error: getErrorMessage(error),
+        },
+      });
+    }
+  }
+
+  private async handleAgentWakeRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.wake.request" }>,
+  ): Promise<void> {
+    try {
+      const agent = await this.requireAgentSleep().wakeAgent(msg.agentId);
+      this.emit({
+        type: "agent.wake.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          agent: await this.buildAgentPayload(agent),
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error, agentId: msg.agentId }, "Failed to wake agent");
+      this.emit({
+        type: "agent.wake.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          agent: null,
+          error: getErrorMessage(error),
+        },
+      });
+    }
+  }
+
+  private async handleAgentGetSleepStateRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.get_sleep_state.request" }>,
+  ): Promise<void> {
+    try {
+      const asleep = await this.requireAgentSleep().listAsleepAgents();
+      this.emit({
+        type: "agent.get_sleep_state.response",
+        payload: { requestId: msg.requestId, asleep, error: null },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.get_sleep_state.response",
+        payload: { requestId: msg.requestId, asleep: [], error: getErrorMessage(error) },
+      });
+    }
   }
 
   private async prepareAgentMessage(agentId: string, text: string): Promise<void> {

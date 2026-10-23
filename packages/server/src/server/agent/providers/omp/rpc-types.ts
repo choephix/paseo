@@ -162,6 +162,8 @@ export const OmpSessionStateSchema = z
     queuedMessageCount: z.number().int().nonnegative(),
     contextUsage: OmpContextUsageSchema.optional(),
     todoPhases: z.unknown().optional(),
+    // Background jobs (async tasks, `/tan` tangents) still running or waiting to deliver.
+    hasPendingAsyncWork: z.boolean().optional(),
   })
   .passthrough();
 
