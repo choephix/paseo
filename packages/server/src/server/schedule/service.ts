@@ -241,6 +241,7 @@ type ScheduleAgentManager = Pick<
     | "runAgent"
     | "waitForAgentEvent"
     | "waitForAgentClose"
+    | "withAwakeHold"
   >;
 
 interface ScheduleWorkspaceCreateInput {
@@ -937,17 +938,22 @@ export class ScheduleService {
         throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} is archived`);
       }
 
-      const agent = await ensureAgentLoaded(schedule.target.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.logger,
-      });
-      if (this.agentManager.hasInFlightRun(agent.id)) {
-        throw new Error(`Agent ${agent.id} already has an active run`);
-      }
-      await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {
-        replaceRunning: true,
-        activeTurnBehavior: "steer",
+      // Sleep must not close the agent between loading it and starting this turn.
+      const targetAgentId = schedule.target.agentId;
+      const agent = await this.agentManager.withAwakeHold(targetAgentId, async () => {
+        const loaded = await ensureAgentLoaded(targetAgentId, {
+          agentManager: this.agentManager,
+          agentStorage: this.agentStorage,
+          logger: this.logger,
+        });
+        if (this.agentManager.hasInFlightRun(loaded.id)) {
+          throw new Error(`Agent ${loaded.id} already has an active run`);
+        }
+        await startAgentRun(this.agentManager, loaded.id, wrappedPrompt, this.logger, {
+          replaceRunning: true,
+          activeTurnBehavior: "steer",
+        });
+        return loaded;
       });
       const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
         waitForActive: true,

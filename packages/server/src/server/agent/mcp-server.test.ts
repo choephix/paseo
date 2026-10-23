@@ -244,6 +244,7 @@ function buildAgentManagerSpies() {
     hydrateTimelineFromProvider: vi.fn().mockResolvedValue(undefined),
     // These tests use Claude, whose history cannot be read without starting it.
     loadTimelineWithoutRuntime: vi.fn().mockResolvedValue(false),
+    withAwakeHold: <T>(_agentId: string, operation: () => Promise<T>) => operation(),
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),

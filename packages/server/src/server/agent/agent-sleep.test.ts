@@ -195,3 +195,40 @@ test("the idle timer sleeps an idle agent only once nothing keeps it awake", asy
   expect((await harness.storage.get(agentId))?.sleep?.reason).toBe("idle");
   expect(sleep.listKeptAwake()).toEqual([]);
 });
+
+test("a prompt on its way to an agent is never cut off by sleep", async () => {
+  const harness = await createHarness();
+  const { manager, storage, sleep, resumePurposes, logger } = harness;
+  const agentId = "00000000-0000-4000-8000-000000000704";
+  await createIdleAgent(harness, agentId, 'Please remember this marker "RED-KITE".');
+
+  // Hold the send between loading the agent and starting its turn: there the agent still
+  // looks idle to a sleep check.
+  const session = manager.getAgent(agentId)?.session;
+  if (!session) throw new Error("expected a live session");
+  let reachedMode!: () => void;
+  const atMode = new Promise<void>((resolve) => (reachedMode = resolve));
+  let releaseMode!: () => void;
+  const modeReleased = new Promise<void>((resolve) => (releaseMode = resolve));
+  session.setMode = async () => {
+    reachedMode();
+    await modeReleased;
+  };
+  const send = sendPromptToAgent({
+    agentManager: manager,
+    agentStorage: storage,
+    agentId,
+    prompt: "What was the marker?",
+    sessionMode: "default",
+    logger,
+  });
+  await atMode;
+
+  await expect(sleep.sleepAgent(agentId, "manual")).rejects.toThrow("running");
+  releaseMode();
+  await send;
+  expect((await manager.waitForAgentEvent(agentId)).status).toBe("idle");
+  expect(await manager.getLastAssistantMessage(agentId)).toMatch(/RED-KITE$/);
+  expect(resumePurposes).toEqual([]);
+  expect((await storage.get(agentId))?.sleep ?? null).toBeNull();
+});

@@ -747,6 +747,8 @@ export class AgentManager {
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
+  // Prompts on their way to an agent (loaded, turn not started yet); see withAwakeHold.
+  private readonly awakeHolds = new Map<string, number>();
   private readonly runs = new AgentRunState();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
@@ -1742,6 +1744,52 @@ export class AgentManager {
     this.retiredInternalAgents.set(entry.record.id, {
       ...entry,
       expiresAt: now + RETIRED_INTERNAL_AGENT_TTL_MS,
+    });
+  }
+
+  /**
+   * Runs a prompt delivery while keeping the agent from being closed by closeAgentIfIdle (sleep).
+   * Covers the gap between loading the agent and its turn starting, when it still looks idle.
+   * Returns the operation's own promise (no extra ticks), so callers keep their timing.
+   */
+  withAwakeHold<T>(agentId: string, operation: () => Promise<T>): Promise<T> {
+    this.awakeHolds.set(agentId, (this.awakeHolds.get(agentId) ?? 0) + 1);
+    const release = () => {
+      const remaining = (this.awakeHolds.get(agentId) ?? 1) - 1;
+      if (remaining > 0) this.awakeHolds.set(agentId, remaining);
+      else this.awakeHolds.delete(agentId);
+    };
+    let result: Promise<T>;
+    try {
+      result = operation();
+    } catch (error) {
+      release();
+      throw error;
+    }
+    void result.then(release, release);
+    return result;
+  }
+
+  /**
+   * Closes the agent only if nothing uses it: idle, no run, no pending permission and no prompt
+   * on its way (withAwakeHold). Decided inside the lifecycle lane, so a prompt that arrives
+   * later waits for the close and resumes the agent instead of being lost.
+   */
+  closeAgentIfIdle(agentId: string): Promise<boolean> {
+    // The lane is what ensureAgentLoaded waits on (waitForAgentClose) before resuming.
+    return this.runLifecycleMutation(agentId, async () => {
+      const agent = this.agents.get(agentId);
+      if (
+        !agent ||
+        agent.lifecycle !== "idle" ||
+        this.hasInFlightRun(agentId) ||
+        agent.pendingPermissions.size > 0 ||
+        this.awakeHolds.has(agentId)
+      ) {
+        return false;
+      }
+      await this.closeAgentRuntime(agentId);
+      return true;
     });
   }
 

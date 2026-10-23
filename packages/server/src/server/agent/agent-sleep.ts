@@ -235,13 +235,11 @@ export class AgentSleepService {
 
     const rssBytes = await readProcessTreeRssBytes(agent.session?.getProcessId?.() ?? null);
     const commands = await agent.session?.listCommands?.().catch(() => null);
-    // A turn may have started while the runtime was measured.
-    const current = this.agentManager.getAgent(agentId);
-    if (!current || this.findBusyReason(current)) {
+    // Re-checked atomically with the close: a turn or a prompt on its way that started while
+    // the runtime was measured keeps the agent awake.
+    if (!(await this.agentManager.closeAgentIfIdle(agentId))) {
       throw new Error("Agent cannot sleep now: running");
     }
-
-    await this.agentManager.closeAgent(agentId);
     if (commands) {
       this.commandsAtSleep.set(agentId, commands);
     }

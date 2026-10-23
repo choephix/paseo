@@ -310,7 +310,14 @@ async function resolvePromptSource(
  * When `unarchive` is false and the agent is archived, the call is a silent
  * no-op (returns the normal turn-start disposition) — the agent is not run.
  */
-export async function sendPromptToAgent(
+export function sendPromptToAgent(
+  params: SendPromptToAgentParams,
+): Promise<{ disposition: PromptDispatchDisposition }> {
+  // Sleep must not close the agent between loading it and starting this prompt's turn.
+  return params.agentManager.withAwakeHold(params.agentId, () => deliverPromptToAgent(params));
+}
+
+async function deliverPromptToAgent(
   params: SendPromptToAgentParams,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
   const unarchive = params.unarchive ?? true;
