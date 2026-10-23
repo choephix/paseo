@@ -170,10 +170,12 @@ test("the idle timer sleeps an idle agent only once nothing keeps it awake", asy
   await sleep.sweep();
   expect(manager.getAgent(agentId)).not.toBeNull();
 
-  // Idle long enough, but open on a device.
-  clock.now += 2 * 60_000;
+  // Idle long enough while its tab stays open on a device, sweep after sweep.
   open.add(agentId);
-  await sleep.sweep();
+  for (let sweep = 0; sweep < 5; sweep += 1) {
+    clock.now += 30_000;
+    await harness.sleep.sweep();
+  }
   expect(manager.getAgent(agentId)).not.toBeNull();
   expect(sleep.listKeptAwake()).toMatchObject([{ agentId, reason: "open_in_client" }]);
 

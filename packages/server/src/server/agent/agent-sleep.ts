@@ -73,9 +73,11 @@ export class AgentSleepService {
   >;
   private readonly now: () => number;
   // Idle time counts from the last of: activity (updatedAt), the first sweep that saw the agent
-  // live (a woken agent keeps its old updatedAt), and the last sweep that saw it open.
+  // live (a woken agent keeps its old updatedAt), and the sweep that saw its tab closed. While
+  // it stays open the idle time keeps running, so the timer reports it as kept awake.
   private readonly liveSince = new Map<string, number>();
   private readonly lastOpenAt = new Map<string, number>();
+  private readonly openAtLastSweep = new Set<string>();
   private readonly keptAwake = new Map<string, AgentKeptAwake>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private sweeping = false;
@@ -135,6 +137,7 @@ export class AgentSleepService {
         if (liveIds.has(agentId)) continue;
         this.liveSince.delete(agentId);
         this.lastOpenAt.delete(agentId);
+        this.openAtLastSweep.delete(agentId);
         this.keptAwake.delete(agentId);
       }
       for (const agent of live) {
@@ -154,7 +157,13 @@ export class AgentSleepService {
       liveSince,
       this.lastOpenAt.get(agent.id) ?? 0,
     );
-    if (open) this.lastOpenAt.set(agent.id, now);
+    if (open) {
+      this.openAtLastSweep.add(agent.id);
+    } else if (this.openAtLastSweep.delete(agent.id)) {
+      this.lastOpenAt.set(agent.id, now);
+      this.keptAwake.delete(agent.id);
+      return;
+    }
 
     const config = this.resolveSleepConfig(agent.provider);
     const candidate = agent.lifecycle === "idle" || agent.lifecycle === "running";
