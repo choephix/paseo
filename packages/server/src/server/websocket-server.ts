@@ -11,6 +11,7 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { AgentManager, AgentMetricsSnapshot } from "./agent/agent-manager.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import { AgentSleepService } from "./agent/agent-sleep.js";
+import { ProviderSleepConfigSchema } from "@getpaseo/protocol/provider-config";
 import type { DownloadTokenStore } from "./file-download/token-store.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type pino from "pino";
@@ -682,7 +683,16 @@ export class VoiceAssistantWebSocketServer {
     this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
-    this.agentSleep = new AgentSleepService({ agentManager, agentStorage, logger: this.logger });
+    this.agentSleep = new AgentSleepService({
+      agentManager,
+      agentStorage,
+      logger: this.logger,
+      getSleepConfig: (provider) =>
+        ProviderSleepConfigSchema.safeParse(this.daemonConfigStore.get().providers[provider]?.sleep)
+          .data,
+      isAgentOpenInClient: (agentId) => this.isAgentOpenInClient(agentId),
+    });
+    this.agentSleep.start();
     this.messageReceipts = new MessageReceipts(join(paseoHome, "agent-requests"));
     this.creationService = new CreationService(
       join(paseoHome, "creations"),
@@ -1067,6 +1077,7 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
+    this.agentSleep.stop();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();
@@ -2561,6 +2572,15 @@ export class VoiceAssistantWebSocketServer {
       ...loggedMetrics,
     };
     this.logger.info(loggedMetrics, "ws_runtime_metrics");
+  }
+
+  // Open = focused in a connected client whose app is visible. The idle timer keeps it awake.
+  private isAgentOpenInClient(agentId: string): boolean {
+    for (const [ws, connection] of this.sessions) {
+      const activity = connection.session.getClientActivity(ws);
+      if (activity?.appVisible && activity.focusedAgentId === agentId) return true;
+    }
+    return false;
   }
 
   private getClientActivityState(session: Session, source: object): ClientPresenceState {

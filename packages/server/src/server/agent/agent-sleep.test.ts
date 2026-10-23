@@ -21,6 +21,8 @@ interface Harness {
   background: { pending: boolean };
   logger: Logger;
   root: string;
+  clock: { now: number };
+  open: Set<string>;
 }
 
 const harnesses: Harness[] = [];
@@ -64,8 +66,27 @@ async function createHarness(): Promise<Harness> {
     isAvailable: async () => await baseClient.isAvailable(),
   };
   const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
-  const sleep = new AgentSleepService({ agentManager: manager, agentStorage: storage, logger });
-  const harness = { manager, storage, sleep, resumePurposes, background, logger, root };
+  const clock = { now: Date.now() };
+  const open = new Set<string>();
+  const sleep = new AgentSleepService({
+    agentManager: manager,
+    agentStorage: storage,
+    logger,
+    getSleepConfig: () => ({ enabled: true, idleMinutes: 1 }),
+    isAgentOpenInClient: (agentId) => open.has(agentId),
+    now: () => clock.now,
+  });
+  const harness = {
+    manager,
+    storage,
+    sleep,
+    resumePurposes,
+    background,
+    logger,
+    root,
+    clock,
+    open,
+  };
   harnesses.push(harness);
   return harness;
 }
@@ -137,4 +158,38 @@ test("an agent with background work is not put to sleep", async () => {
   const woken = await harness.sleep.wakeAgent(agentId);
   expect(woken.lifecycle).toBe("idle");
   expect(harness.resumePurposes).toEqual(["interactive"]);
+});
+
+test("the idle timer sleeps an idle agent only once nothing keeps it awake", async () => {
+  const harness = await createHarness();
+  const { manager, sleep, clock, open, background } = harness;
+  const agentId = "00000000-0000-4000-8000-000000000703";
+  await createIdleAgent(harness, agentId, "Say hello.");
+
+  // Not idle for a minute yet.
+  await sleep.sweep();
+  expect(manager.getAgent(agentId)).not.toBeNull();
+
+  // Idle long enough, but open on a device.
+  clock.now += 2 * 60_000;
+  open.add(agentId);
+  await sleep.sweep();
+  expect(manager.getAgent(agentId)).not.toBeNull();
+  expect(sleep.listKeptAwake()).toMatchObject([{ agentId, reason: "open_in_client" }]);
+
+  // Closing the tab restarts the idle minute; then background work keeps it awake.
+  open.delete(agentId);
+  await sleep.sweep();
+  expect(manager.getAgent(agentId)).not.toBeNull();
+  clock.now += 2 * 60_000;
+  background.pending = true;
+  await sleep.sweep();
+  expect(manager.getAgent(agentId)).not.toBeNull();
+  expect(sleep.listKeptAwake()).toMatchObject([{ agentId, reason: "background_work" }]);
+
+  background.pending = false;
+  await sleep.sweep();
+  expect(manager.getAgent(agentId)).toBeNull();
+  expect((await harness.storage.get(agentId))?.sleep?.reason).toBe("idle");
+  expect(sleep.listKeptAwake()).toEqual([]);
 });

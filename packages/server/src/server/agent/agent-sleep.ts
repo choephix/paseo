@@ -6,6 +6,7 @@ import { ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentSlashCommand } from "./agent-sdk-types.js";
 import type { AgentStorage } from "./agent-storage.js";
+import type { ProviderSleepConfig } from "@getpaseo/protocol/provider-config";
 
 // Sleeping agents. Sleeping closes an idle agent's runtime to free its memory; the agent
 // stays registered, its conversation stays readable without starting it (see
@@ -23,6 +24,22 @@ export interface AgentSleepMarker {
 /** Why an agent cannot be put to sleep right now. */
 export type AgentAwakeReason = "running" | "permission" | "background_work";
 
+/** Why the idle timer left an idle-long-enough agent awake. */
+export type AgentKeptAwakeReason = AgentAwakeReason | "open_in_client";
+
+export interface AgentKeptAwake {
+  agentId: string;
+  reason: AgentKeptAwakeReason;
+  /** When the timer first kept it awake for this reason. */
+  since: string;
+}
+
+export interface AgentSleepConfig {
+  provider: string;
+  enabled: boolean;
+  idleMinutes: number;
+}
+
 export interface AsleepAgent {
   agentId: string;
   provider: string;
@@ -34,7 +51,15 @@ export interface AgentSleepServiceOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   logger: Logger;
+  /** The provider's `agents.providers.<id>.sleep` config, if any. Read on every sweep. */
+  getSleepConfig?: (provider: string) => ProviderSleepConfig | undefined;
+  /** Whether a connected client shows this agent right now (focused in a visible app). */
+  isAgentOpenInClient?: (agentId: string) => boolean;
+  now?: () => number;
 }
+
+export const DEFAULT_SLEEP_IDLE_MINUTES = 60;
+const SWEEP_INTERVAL_MS = 30_000;
 
 const BACKGROUND_WORK_PROBE_TIMEOUT_MS = 5_000;
 
@@ -42,6 +67,18 @@ export class AgentSleepService {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly logger: Logger;
+  private readonly getSleepConfig: NonNullable<AgentSleepServiceOptions["getSleepConfig"]>;
+  private readonly isAgentOpenInClient: NonNullable<
+    AgentSleepServiceOptions["isAgentOpenInClient"]
+  >;
+  private readonly now: () => number;
+  // Idle time counts from the last of: activity (updatedAt), the first sweep that saw the agent
+  // live (a woken agent keeps its old updatedAt), and the last sweep that saw it open.
+  private readonly liveSince = new Map<string, number>();
+  private readonly lastOpenAt = new Map<string, number>();
+  private readonly keptAwake = new Map<string, AgentKeptAwake>();
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private sweeping = false;
   // Slash commands listed while the runtime was up, so typing `/` in a sleeping agent's
   // composer still offers them without starting it.
   private readonly commandsAtSleep = new Map<string, AgentSlashCommand[]>();
@@ -50,6 +87,112 @@ export class AgentSleepService {
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
     this.logger = options.logger.child({ module: "agent-sleep" });
+    this.getSleepConfig = options.getSleepConfig ?? (() => undefined);
+    this.isAgentOpenInClient = options.isAgentOpenInClient ?? (() => false);
+    this.now = options.now ?? Date.now;
+  }
+
+  start(): void {
+    if (this.sweepTimer) return;
+    this.sweepTimer = setInterval(() => {
+      void this.sweep().catch((error: unknown) => {
+        this.logger.warn({ err: error }, "Idle sleep sweep failed");
+      });
+    }, SWEEP_INTERVAL_MS);
+    this.sweepTimer.unref?.();
+  }
+
+  stop(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
+  }
+
+  /** Sleep config of every provider whose agents can sleep. */
+  listSleepConfigs(): AgentSleepConfig[] {
+    return this.agentManager
+      .getRegisteredProviderIds()
+      .filter((provider) => this.agentManager.supportsRuntimeFreeHistory(provider))
+      .map((provider) => this.resolveSleepConfig(provider));
+  }
+
+  listKeptAwake(): AgentKeptAwake[] {
+    return [...this.keptAwake.values()];
+  }
+
+  /**
+   * Puts to sleep every live agent whose provider has sleep enabled and that has been idle
+   * for its provider's idleMinutes, unless it is running, waiting on a permission, has
+   * background work, or is open in a client. Skips are recorded for listKeptAwake.
+   */
+  async sweep(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      const now = this.now();
+      const live = this.agentManager.listAgents();
+      const liveIds = new Set(live.map((agent) => agent.id));
+      for (const agentId of this.liveSince.keys()) {
+        if (liveIds.has(agentId)) continue;
+        this.liveSince.delete(agentId);
+        this.lastOpenAt.delete(agentId);
+        this.keptAwake.delete(agentId);
+      }
+      for (const agent of live) {
+        await this.considerIdleAgent(agent, now);
+      }
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  private async considerIdleAgent(agent: ManagedAgent, now: number): Promise<void> {
+    const liveSince = this.liveSince.get(agent.id) ?? now;
+    this.liveSince.set(agent.id, liveSince);
+    const open = this.isAgentOpenInClient(agent.id);
+    const lastActiveAt = Math.max(
+      agent.updatedAt.getTime(),
+      liveSince,
+      this.lastOpenAt.get(agent.id) ?? 0,
+    );
+    if (open) this.lastOpenAt.set(agent.id, now);
+
+    const config = this.resolveSleepConfig(agent.provider);
+    const candidate = agent.lifecycle === "idle" || agent.lifecycle === "running";
+    if (
+      !config.enabled ||
+      !candidate ||
+      !this.agentManager.supportsRuntimeFreeHistory(agent.provider) ||
+      now - lastActiveAt < config.idleMinutes * 60_000
+    ) {
+      this.keptAwake.delete(agent.id);
+      return;
+    }
+
+    const reason: AgentKeptAwakeReason | null =
+      this.findBusyReason(agent) ?? (open ? "open_in_client" : await this.findAwakeReason(agent));
+    if (reason) {
+      if (this.keptAwake.get(agent.id)?.reason !== reason) {
+        this.keptAwake.set(agent.id, {
+          agentId: agent.id,
+          reason,
+          since: new Date(now).toISOString(),
+        });
+      }
+      return;
+    }
+    this.keptAwake.delete(agent.id);
+    await this.sleepAgent(agent.id, "idle").catch((error: unknown) => {
+      this.logger.warn({ err: error, agentId: agent.id }, "Failed to put idle agent to sleep");
+    });
+  }
+
+  private resolveSleepConfig(provider: string): AgentSleepConfig {
+    const config = this.getSleepConfig(provider);
+    return {
+      provider,
+      enabled: config?.enabled === true,
+      idleMinutes: config?.idleMinutes ?? DEFAULT_SLEEP_IDLE_MINUTES,
+    };
   }
 
   /**

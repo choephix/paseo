@@ -8238,15 +8238,28 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "agent.get_sleep_state.request" }>,
   ): Promise<void> {
     try {
-      const asleep = await this.requireAgentSleep().listAsleepAgents();
+      const agentSleep = this.requireAgentSleep();
+      const asleep = await agentSleep.listAsleepAgents();
       this.emit({
         type: "agent.get_sleep_state.response",
-        payload: { requestId: msg.requestId, asleep, error: null },
+        payload: {
+          requestId: msg.requestId,
+          providers: agentSleep.listSleepConfigs(),
+          asleep,
+          keptAwake: agentSleep.listKeptAwake(),
+          error: null,
+        },
       });
     } catch (error) {
       this.emit({
         type: "agent.get_sleep_state.response",
-        payload: { requestId: msg.requestId, asleep: [], error: getErrorMessage(error) },
+        payload: {
+          requestId: msg.requestId,
+          providers: [],
+          asleep: [],
+          keptAwake: [],
+          error: getErrorMessage(error),
+        },
       });
     }
   }

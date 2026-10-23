@@ -4902,6 +4902,18 @@ export const AgentGetSleepStateResponseMessageSchema = z.object({
   type: z.literal("agent.get_sleep_state.response"),
   payload: z.object({
     requestId: z.string(),
+    // Idle-timer config of every provider whose agents can sleep (agents.providers.<id>.sleep).
+    providers: z.array(
+      z.object({ provider: z.string(), enabled: z.boolean(), idleMinutes: z.number() }),
+    ),
+    // Live agents the idle timer would have put to sleep but kept awake, and why.
+    keptAwake: z.array(
+      z.object({
+        agentId: z.string(),
+        reason: z.enum(["running", "permission", "background_work", "open_in_client"]),
+        since: z.string(),
+      }),
+    ),
     // Closed, unarchived agents whose conversation is served without starting them.
     // `sleep` is null for one closed some other way (for example by a daemon restart).
     asleep: z.array(

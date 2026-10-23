@@ -544,6 +544,18 @@
               },
               "order": {
                 "type": "number"
+              },
+              "sleep": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "idleMinutes": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
               }
             }
           }

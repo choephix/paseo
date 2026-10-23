@@ -48,6 +48,15 @@ export const ProviderProfileModelSchema = z.object({
   thinkingOptions: z.array(ProviderProfileThinkingOptionSchema).optional(),
 });
 
+// Idle agents of this provider are put to sleep (runtime stopped, conversation still readable)
+// after `idleMinutes` without activity. Off unless `enabled`. Only providers that replay history
+// without a runtime (OMP) can sleep. Lives here because daemons that do not know the key strip
+// it from a provider entry instead of rejecting the whole config.
+export const ProviderSleepConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  idleMinutes: z.number().positive().optional(),
+});
+
 export const ProviderOverrideSchema = z.object({
   extends: z.string().optional(),
   label: z.string().optional(),
@@ -63,6 +72,7 @@ export const ProviderOverrideSchema = z.object({
   paseoTools: ProviderPaseoToolsPolicySchema.optional(),
   enabled: z.boolean().optional(),
   order: z.number().optional(),
+  sleep: ProviderSleepConfigSchema.optional(),
 });
 
 const BUILTIN_PROVIDER_IDS = ["claude", "codex", "copilot", "opencode", "pi", "omp"] as const;
@@ -134,6 +144,7 @@ export type ProviderPaseoToolsPolicy = z.infer<typeof ProviderPaseoToolsPolicySc
 export type ProviderProfileModel = z.infer<typeof ProviderProfileModelSchema>;
 export type ProviderOverride = z.infer<typeof ProviderOverrideSchema>;
 export type ProviderOverrides = z.infer<typeof ProviderOverridesSchema>;
+export type ProviderSleepConfig = z.infer<typeof ProviderSleepConfigSchema>;
 export type AgentProviderRuntimeSettingsMap = Partial<
   Record<AgentProvider, ProviderRuntimeSettings>
 >;
